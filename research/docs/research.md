@@ -639,7 +639,7 @@ Decisions the team must take before connector development starts. Evidence: `pro
 | O-07 | Global `RTK.md` steering points to `rtk`, which is not installed. The hook turned `cat` output of this document into fragments. | Install `rtk`, or remove the pointer. | Team |
 | O-08 | Public URL for the API during golden-fixture runs. localhost.run rotates its domain every few minutes and Data Studio caches each failure (LS-52). serveo.net is stable only while the ssh session lives. | Registered serveo key with a fixed subdomain, ngrok reserved domain, or a small cloud deployment (needs billing). | Team |
 | O-09 | This document exceeds the agent read limit (740 lines) and must be paged. | Move the evidence tables (sections 5 to 7) to `research/docs/evidence.md` with a pointer, or keep as is. | Team |
-| O-10 | The Serena MCP instruction is loaded every session and was not used in the prototype. | Disable it for this repository, or keep. | Team |
+| O-10 | The Serena MCP instruction is loaded every session and was not used in the prototype. | **Done 2026-11-14:** disabled for this repository (`disabledMcpServers: ["serena"]` in the project entry of `~/.claude.json`; re-enable with `/mcp`). | Team |
 | O-11 | No CI. `make check` (schema self-check + replay of all golden fixtures in-process) is the candidate gate. `prototype/verify_dashboard.py` stays manual because it needs a browser dump. | Add CI with `make check` when the repository is created. | Wayfinder |
 
 ### 13.1 Handover to Wayfinder
