@@ -1,0 +1,35 @@
+flights:
+  table: flights_tbl
+  description: "Flight data model"
+  dimensions:
+    origin:
+      expr: _.origin
+      description: "Origin airport code"
+      metadata: {looker_studio: {group: Route}}
+    carrier: _.carrier
+    dep_date:
+      expr: _.dep_date
+      description: "Departure date"
+      is_time_dimension: true
+      smallest_time_grain: "TIME_GRAIN_DAY"
+  measures:
+    flight_count:
+      expr: _.count()
+      description: "Number of flights"
+    total_distance:
+      expr: _.distance.sum()
+      description: "Total distance flown"
+      metadata: {looker_studio: {semantic_type: NUMBER}}
+    avg_distance: _.distance.mean()
+    max_delay: _.delay.max()
+    unique_carriers:
+      expr: _.carrier.nunique()
+      description: "Distinct carriers"
+      metadata: {looker_studio: {compute: both}}
+    median_delay: _.delay.median()
+  calculated_measures:
+    distance_per_flight:
+      expr: _.total_distance / _.flight_count
+      description: "Average distance per flight"
+    pct_of_total:
+      expr: _.total_distance / _.all(_.total_distance) * 100

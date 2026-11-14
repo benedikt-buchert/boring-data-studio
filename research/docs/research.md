@@ -1,0 +1,737 @@
+# Research baseline: Data Studio connector for the Boring Semantic Layer
+
+| Item | Value |
+|---|---|
+| Status | Baseline for a new code repository. Research only. |
+| Date | 2026-11-14 |
+| Writing standard | [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) rules. Technical names (getData, Ibis, Docker) are permitted. |
+| Versions tested | boring-semantic-layer 0.3.19, ibis-framework 11.0.0, duckdb 2.0.0, Python 3.12 |
+| Evidence code | [`spikes/spike_bsl_data_studio.py`](../spikes/spike_bsl_data_studio.py), [`spikes/spike_distinct_and_limits.py`](../spikes/spike_distinct_and_limits.py), [`spikes/spike_function_semantics.py`](../spikes/spike_function_semantics.py), [`spikes/spike_compute_location.py`](../spikes/spike_compute_location.py), [`spikes/spike_property_based.py`](../spikes/spike_property_based.py) and [`spikes/flights.yml`](../spikes/flights.yml) |
+| Follow-up | Detailed design is out of scope for all parts. Wayfinder specifies it, with this document as input (section 13.1). |
+
+## 1. Purpose and scope
+
+This document defines the baseline for a Data Studio community connector. The connector gives Data Studio access to metrics and dimensions from the Boring Semantic Layer (BSL). The connector also gives the descriptions of these fields.
+
+The document has these objectives:
+
+1. Record the decisions that the team made (section 3).
+2. Prove each technical claim with evidence from documentation or code (sections 5 to 7 and 10).
+3. Identify the claims that are not verified. Each such claim becomes a required test (section 12).
+
+The document does not contain implementation code or detailed design. The spike code is evidence only. Wayfinder does the detailed design (section 13.1).
+
+**Product name.** Google renamed Looker Studio to "Data Studio". This document uses "Data Studio" (LS-21).
+
+## 2. Terms
+
+| Term | Definition |
+|---|---|
+| BSL | Boring Semantic Layer. A Python semantic layer on top of Ibis. |
+| Model | One BSL semantic model. It has dimensions, measures, calculated measures and joins. |
+| Base measure | A BSL measure that is a direct aggregation of a column, for example `_.distance.sum()`. |
+| Calculated measure | A BSL measure that refers to other measures by name, for example `_.total_distance / _.flight_count`. |
+| Decomposable | A measure is decomposable when Data Studio can calculate the correct value for any grain from values at a finer grain. |
+| Prove safe or exclude | The classification rule. The connector exposes a measure as a normal metric only when it can prove that the measure is decomposable. |
+| Helper field | A hidden field that the connector adds to make a formula possible, for example the sum and the non-NULL count for a mean. |
+| Grain | The set of dimensions that a query groups by. |
+| Simulator | A Python model of the Data Studio behavior that this project needs. Tests use it in place of Data Studio. |
+| Golden fixture | A real getData request from Data Studio, saved as a file and used in tests. |
+
+## 3. Decisions
+
+These decisions set the direction for the detailed design. They are inputs for Wayfinder. Names, values and formats in them (for example the `__bsl` suffix, the 500,000-row cap, the 300-second timeout and the `metadata.looker_studio` keys) are proposals. Wayfinder can change them. A change must keep the evidence in sections 5 to 7 and 10 valid.
+
+| ID | Decision |
+|---|---|
+| D-01 | The document is a research baseline. It contains no implementation code and no detailed design. Wayfinder does the detailed design. |
+| D-02 | The service supports all Ibis backends. Tests and CI use DuckDB. |
+| D-03 | The API runs in a Docker image. The image runs on any cloud provider. |
+| D-04 | Distribution is internal first. The project will become open source and published later. |
+| D-05 | The connector excludes measures that it cannot express reliably as Data Studio formulas. This is the default. Configuration can change it per measure. |
+| D-06 | The user selects an environment (`prod` or `dev`) in the connector configuration. The field descriptions show the model version. |
+| D-07 | Each claim has an ID, a source link and a status. |
+| D-08 | The document uses ASD-STE100 rules without a word-by-word dictionary audit. |
+| D-09 | The document is a Markdown file in the repository. |
+| D-10 | The connector derives the treatment of each measure from the BSL expression (section 6). |
+| D-11 | Per-field overrides live in BSL `metadata` under the key `looker_studio`. |
+| D-12 | The Docker image contains the models. The build records the git SHA and tag in the image. |
+| D-13 | Version 1 uses key authentication. The authentication layer is pluggable. Row-level security is not in scope for version 1. |
+| D-14 | One Data Studio data source maps to one BSL model, including its joins. |
+| D-15 | Each model exposes one primary time dimension at day grain. The connector sets `dateRangeRequired` to true. |
+| D-16 | The simulator covers the table body, the summary row, the scorecard, dimension filters, the date range and date-grain bucketing. Blends, comparison periods and report-level calculated fields are not in scope. |
+| D-17 | The document includes a release-readiness section (section 11). |
+| D-18 | The connector is written in TypeScript and deployed with `clasp`. Tests run in Node. |
+| D-19 | Version 1 uses an in-memory response cache behind an interface. The cache key contains the model version and the normalized request. |
+| D-20 | The connector translates BSL aggregations to Data Studio formula functions when a spike proves the result correct on the rows that the connector returns (section 7.6). |
+| D-21 | The API never truncates a response. When a response would exceed a limit, the API returns an error (section 10.3). |
+| D-22 | The connector builds the schema with the `DataStudioApp` field builder and `setFormula` with `$` references (LS-04). It does not return raw schema JSON. This removes U-11. |
+| D-23 | Formulas always refer to base or helper fields, never to other formula fields. This removes U-09. |
+| D-24 | The API pushes regular expression filters down only to backends that use RE2 (LS-38, E-16). For other backends it sets `filtersApplied` to false. |
+| D-25 | Each measure has a compute location: Data Studio calculates it from base or raw fields, or BSL calculates it for each requested group. The default is chosen by the classifier. A measure can override it (section 7.7). |
+| D-26 | The connector uses TypeScript, a bundler with an Apps Script plugin, and `clasp`. It has local tests with fakes and remote tests that run connector functions in Apps Script (section 14). |
+| D-27 | The project copies no code from GPL-licensed or unlicensed repositories. It reuses only ideas from them (section 14.1). |
+| D-28 | `compute: both` generates two fields from one BSL measure: an exact `data_studio` field with the plain ID and a fixed-grain `bsl` field with the ID suffix `__bsl` (section 7.7). |
+
+## 4. Architecture
+
+### 4.1 Components
+
+```mermaid
+flowchart LR
+  subgraph Git["Git repository"]
+    Y["BSL YAML models<br/>+ metadata.looker_studio"]
+    T["Tests: contract, simulator,<br/>connector, golden fixtures"]
+  end
+  subgraph CI["CI pipeline"]
+    C1["make check"]
+    C2["docker build<br/>(SHA + tag in image)"]
+  end
+  subgraph Run["Any container platform"]
+    API["Python API<br/>(FastAPI + BSL + Ibis)"]
+    Cache["Response cache<br/>(in-memory, v1)"]
+  end
+  WH[("Warehouse<br/>any Ibis backend")]
+  subgraph G["Google"]
+    AS["Apps Script connector<br/>(TypeScript, thin)"]
+    DS["Data Studio report"]
+  end
+  Y --> C1 --> C2 --> API
+  T --> C1
+  API <--> Cache
+  API -->|"Ibis SQL"| WH
+  DS -->|"getSchema / getData"| AS
+  AS -->|"HTTPS POST + key"| API
+```
+
+The API does all semantic work. The Apps Script connector only forwards requests and responses. This keeps almost all logic in Python, where an agent can run tests without Google services.
+
+### 4.2 getData request flow
+
+```mermaid
+sequenceDiagram
+  participant DS as Data Studio
+  participant AS as Apps Script connector
+  participant API as Python API
+  participant BSL as BSL / Ibis
+  participant WH as Warehouse
+  DS->>AS: getData(fields, dimensionsFilters, dateRange)
+  AS->>API: POST /data (same JSON, key in header)
+  API->>API: Map fields to BSL dimensions and base measures
+  API->>API: Translate filters and date range (all or none)
+  API->>BSL: group_by(requested dimensions).aggregate(base measures)
+  BSL->>WH: SQL
+  WH-->>BSL: rows
+  BSL-->>API: DataFrame
+  API-->>AS: {schema, rows, filtersApplied}
+  AS-->>DS: response
+  DS->>DS: Evaluate formulas, re-aggregate, summary row
+```
+
+### 4.3 Reuse of the BSL server
+
+BSL 0.3.19 contains a FastAPI server (BSL-06). It has model loading, model schema routes, a query route and an authentication hook. The project must decide if it extends this server or only reuses its parts. The recommendation is to add the Data Studio routes to the app that `create_app` returns. This reuses the model loading and the authentication hook. Status: open item O-01.
+
+## 5. Evidence: Data Studio connector contract
+
+Status values: **Doc** (confirmed by official documentation), **Code** (confirmed by code or by a spike), **Secondary** (third-party source only), **Unverified** (needs a test, see section 12).
+
+Primary sources:
+
+- API reference: <https://developers.google.com/data-studio/connector/reference>
+- Calculated fields: <https://developers.google.com/data-studio/connector/calculated-fields>
+- Filters: <https://developers.google.com/looker-studio/connector/filters>
+- Semantic types: <https://developers.google.com/looker-studio/connector/semantics>
+- Partner Connector requirements: <https://developers.google.com/data-studio/connector/pscc-requirements>
+- Local development: <https://developers.google.com/data-studio/connector/local-development>
+- Apps Script quotas: <https://developers.google.com/apps-script/guides/services/quotas>
+
+| ID | Claim | Source | Status |
+|---|---|---|---|
+| LS-01 | A connector implements `getAuthType`, `getConfig`, `getSchema` and `getData`. Key authentication also needs `isAuthValid`, `resetAuth` and `setCredentials`. | API reference | Doc |
+| LS-02 | A field `name` is the unique identifier. Only letters, digits and underscores are permitted. A BSL join name such as `carriers.name` must therefore become `carriers__name`. | API reference, Field | Doc |
+| LS-03 | A field has `label`, `description`, `dataType`, `group`, `formula`, `isHidden`, `isDefault`, `defaultAggregationType` and `semantics`. The description is plain text only. | API reference, Field | Doc |
+| LS-04 | A formula refers to another field ID with a `$` prefix, for example `SUM($cost) / SUM($units)`. Function names cannot be field IDs. | Calculated fields | Doc |
+| LS-05 | A formula that contains an aggregation needs the aggregation `AUTO`. A formula without an aggregation needs `NONE`. | Calculated fields | Doc |
+| LS-06 | Data Studio drops a field with an invalid formula. It does not show an error. | API reference, `formula` | Doc |
+| LS-07 | When a field has a formula, Data Studio ignores the aggregation properties. A formula set by the connector cannot be edited in the fields editor. | API reference, `formula` | Doc |
+| LS-08 | A hidden field does not appear in the field pickers, but formulas can use it. A formula field cannot be hidden. | API reference, `isHidden` | Doc |
+| LS-09 | When `isReaggregatable` is false, the aggregation is "Auto" and the user cannot change it. The property applies only to metrics. The default is true. | API reference, `semantics` | Doc |
+| LS-10 | When one field has `semantics.semanticType`, Data Studio disables automatic semantic detection. | API reference, `semantics` | Doc |
+| LS-11 | The getData request contains `fields`, `dimensionsFilters`, `dateRange` and `scriptParams`. It contains no information about the expected aggregation. The connector must return rows at the grain of the requested dimensions. | API reference, getData; [Databricks forum](https://community.databricks.com/t5/warehousing-analytics/databricks-connector-for-looker-studio-no-aggregation-pushdown/m-p/115364) (Secondary) | Doc |
+| LS-12 | getData returns at most 1 million rows. | API reference, getData | Doc |
+| LS-13 | When a request has more than 20 fields, Data Studio sends more than one getData request. It groups the fields 20 at a time. | API reference, getData | Doc |
+| LS-14 | In `dimensionsFilters`, the connector must OR the clauses in each inner array and AND the outer arrays. Each clause has `fieldName`, `values`, `type` (INCLUDE or EXCLUDE) and `operator`. | API reference; Filters | Doc |
+| LS-15 | The filter operators are EQUALS, CONTAINS, REGEXP_PARTIAL_MATCH, REGEXP_EXACT_MATCH, IN_LIST, IS_NULL, BETWEEN and four NUMERIC comparison operators. | API reference, Filter Operator | Doc |
+| LS-16 | The connector must apply all filters or no filters. When it applies them, it removes the `forFilterOnly` fields and sets `filtersApplied` to true. When it does not apply them, it returns the `forFilterOnly` fields and sets `filtersApplied` to false. Data Studio then applies the filters. | Filters | Doc |
+| LS-17 | `dateRange` uses `YYYY-MM-DD`. It is present only when `dateRangeRequired` is true. The default range is the last 28 days without today. | API reference, getData | Doc |
+| LS-18 | A `YEAR_MONTH_DAY` value uses the format `YYYYMMDD`. | API reference, SemanticType | Doc |
+| LS-19 | `scriptParams.sampleExtraction` is true when the request is for semantic type detection. | API reference; Semantic types | Doc |
+| LS-20 | The auth types include `KEY` and `PATH_KEY`. `PATH_KEY` collects a path and a key from the user. | API reference, AuthType and setCredentials | Doc |
+| LS-21 | Looker Studio is now called Data Studio. | Banner on the [Data Studio documentation](https://docs.cloud.google.com/data-studio/stddev) | Doc |
+| LS-22 | "Field editing in reports" is on by default for new data sources. A data source editor can turn it off. When it is on, report editors can change field names and aggregations. Metrics with the aggregation "Auto" cannot be changed. | [Edit fields in your reports](https://support.google.com/datastudio/answer/7512288); [Model your data](https://docs.cloud.google.com/looker/docs/studio/model-your-data) | Doc |
+| LS-23 | The summary row of a table calculates a formula again from the aggregated totals. It does not add the row values. | [Dataslayer](https://support.dataslayer.ai/discrepancy); [Google: blending to re-aggregate](https://docs.cloud.google.com/looker/docs/studio/use-blending-to-reaggregate-data) | Secondary, see U-02 |
+| LS-24 | When a chart filter forces Data Studio to aggregate a pre-aggregated ratio metric again, Data Studio shows the error "Unable to aggregate ratio metrics". | [Google help](https://docs.cloud.google.com/looker/docs/studio/what-does-the-unable-to-aggregate-ratio-metrics-error-mean) | Doc, see U-07 |
+| LS-25 | Apps Script limits: 6 minutes runtime per execution; per URL Fetch call 50 MB response, 50 MB POST body, 2 KB URL, 100 headers and 8 KB header size; 20,000 (consumer) or 100,000 (Workspace) URL Fetch calls per user per day. | Apps Script quotas | Doc |
+| LS-26 | `dscc-gen` and `clasp` support local development. They push code, open deployments and update the `Production` deployment from the command line. | Local development | Doc |
+| LS-27 | A Partner Connector needs: a `Production` deployment, a manifest with `addOnUrl`, `supportUrl`, `logoUrl`, privacy policy and terms URLs, explicit `oauthScopes`, a `urlFetchWhitelist` (or an exception), and OAuth client verification for all auth types. The name must not contain the word "connector". | Partner Connector requirements | Doc |
+| LS-28 | The Data Studio formula functions include these aggregations: `SUM`, `COUNT`, `COUNT_DISTINCT`, `APPROX_COUNT_DISTINCT`, `AVG`, `MIN`, `MAX`, `MEDIAN`, `PERCENTILE(X, N)` and `STDDEV`. | [Function list](https://docs.cloud.google.com/data-studio/function-list) | Doc |
+| LS-29 | Data Studio keeps queries and their results in memory. It serves a query from memory when it saw the same query before and the freshness threshold is not exceeded. A new query always goes to the data source. With owner's credentials, all viewers share one freshness state. With viewer's credentials, each viewer has their own. The manual refresh cooldown is one minute. Google lists the freshness options for community connectors as "varies". | [Manage data freshness](https://docs.cloud.google.com/data-studio/manage-data-freshness) | Doc |
+| LS-30 | Apps Script allows 30 simultaneous executions per user and 1,000 per script. Daily quotas reset 24 hours after the first request. Google can change all quotas and limits without notice. | Apps Script quotas | Doc |
+| LS-31 | A connector vendor recommends fewer than 100,000 rows per data source for performance, and fewer than 30 data connections per report because of the simultaneous execution limit. The same vendor states a 12-hour freshness for community connectors. | [Civis connector documentation](https://support.civisanalytics.com/hc/en-us/articles/360043612111) | Secondary |
+| LS-32 | The effective user of a connector is the data source owner (owner's credentials) or the report viewer (viewer's credentials). A connector can force viewer's credentials with `forceViewersCredentials` in the manifest. | [Access user identity](https://developers.google.com/data-studio/connector/user-identity); [Force viewer's credentials](https://developers.google.com/data-studio/connector/force-viewers-credentials); [Manifest](https://developers.google.com/looker-studio/connector/manifest) | Doc |
+| LS-33 | A Workspace administrator can turn off community connectors or Apps Script for the organization. Then charts from community connectors cannot fetch data. | [Community connector errors](https://docs.cloud.google.com/data-studio/community-connector-errors) | Doc |
+| LS-34 | Only connector admins see error details. Other users see a message only when the connector throws it with `newUserError()`. | [Error handling](https://developers.google.com/data-studio/connector/error-handling) | Doc |
+| LS-35 | A direct link `datasources/create?connectorId=DEPLOYMENT_ID` opens Data Studio with the connector selected. `connectorConfig` (URL-encoded JSON) fills the configuration. `reportTemplateId` sets a report template. | [Direct links](https://developers.google.com/data-studio/connector/direct-links) | Doc |
+| LS-36 | The Data Studio API only searches assets and manages permissions. It works only for Workspace users whose organization authorized the app with domain-wide delegation. | [Data Studio API](https://developers.google.com/data-studio/integrate/api); [API reference](https://developers.google.com/data-studio/integrate/api/reference) | Doc |
+| LS-37 | The Linking API creates a report from a template report with a URL. It can configure the data sources of the report. Community connector support through a `connectorId` parameter is described by a third party. | [Linking API](https://developers.google.com/data-studio/integrate/linking-api); [API Evangelist](https://raw.githubusercontent.com/api-evangelist/google-data-studio/refs/heads/main/capabilities/linking-reports.yaml) | Doc; `connectorId`: Secondary |
+| LS-38 | Data Studio uses the RE2 regular expression syntax. DuckDB also uses RE2. | [REGEXP_MATCH](https://docs.cloud.google.com/data-studio/regexpmatch); [DuckDB](https://duckdb.org/docs/current/sql/functions/regular_expressions) | Doc |
+| LS-39 | Documentation examples for the input 95, 100, 92: `PERCENTILE(x, 30.5)` = 93.83, `STDDEV` = 3.3, `VARIANCE` = 10.89. These are linear-interpolation percentile and population statistics (E-13, E-14). | [PERCENTILE](https://docs.cloud.google.com/data-studio/percentile); [STDDEV](https://docs.cloud.google.com/data-studio/stddev); [VARIANCE](https://docs.cloud.google.com/data-studio/variance) | Doc + Code |
+| LS-40 | `COUNT_DISTINCT` takes a dimension or a non-aggregated expression. It does not accept metrics or fields with the aggregation "Auto". NULL handling can differ between systems. | [COUNT_DISTINCT](https://docs.cloud.google.com/data-studio/countdistinct) | Doc |
+| LS-41 | A connector name in the manifest has at most 28 characters. | [Manifest](https://developers.google.com/looker-studio/connector/manifest) | Doc |
+| LS-42 | A connector vendor reports a Data Studio timeout message for slow requests. The timeout value is not documented. | [Two Minute Reports](https://twominutereports.com/help/google-data-studio/troubleshooting) | Secondary |
+| LS-43 | `@types/google-apps-script` 2.0.15 types `DataStudioApp`, including `setFormula`, `setIsHidden`, `setIsReaggregatable`, `newUserError` and the getData request. The request type does not include `forFilterOnly`. `@google/clasp` 3.4.1 and `@google/dscc-gen` 2.0.31 are on npm. | npm registry, package contents | Code |
+| LS-44 | Chart cross-filtering is on by default for charts based on community connectors. Cross-filtering can increase the number of requests to the connector. | [Connector changelog](https://developers.google.com/looker-studio/connector/changelog) | Doc |
+| LS-45 | Google's own Looker connector limits charts to 5,000 rows and queries to 5 minutes. Its data sources permit calculated fields only on dimensions, with a subset of functions. | [Looker connector limits](https://docs.cloud.google.com/data-studio/limits-of-the-looker-connector) | Doc |
+| LS-46 | The native PostgreSQL connector uses the PostgreSQL JDBC driver and connects a data source to one table in the `public` schema, or to a custom query. Data Studio uses a custom query as the inner SELECT of each query it generates. Documented data types are numeric, character and boolean. Queries can time out after 3 to 5 minutes. A firewall must allow the Data Studio IP addresses. Private IP connections to Cloud SQL are not supported. | [Connect to PostgreSQL](https://docs.cloud.google.com/looker/docs/studio/connect-to-postgresql) | Doc |
+| LS-47 | Data Studio fills field descriptions automatically only for the Looker and Search Ads 360 connectors. | [Edit a data source](https://cloud.google.com/looker/docs/studio/edit-a-data-source-article) | Doc |
+| LS-48 | Cube's SQL API exposes each cube as a table and each measure as a column. It accepts `MEASURE()` for every measure type, and a standard aggregate only when it matches the measure type. Cube built a query rewrite system for this, because SQL has no native measure concept. | [Cube SQL API query format](https://cube.dev/docs/product/apis-integrations/sql-api/query-format); [Cube blog](https://cube.dev/blog/about-query-interfaces-for-olap-systems) | Doc (vendor) |
+
+## 6. Evidence: Boring Semantic Layer
+
+Primary sources:
+
+- Repository: <https://github.com/boringdata/boring-semantic-layer>
+- Package: <https://pypi.org/project/boring-semantic-layer/>
+- Installed code: `boring_semantic_layer` 0.3.19 (files named below)
+
+| ID | Claim | Source | Status |
+|---|---|---|---|
+| BSL-01 | The YAML format accepts `expr`, `description` and `metadata` for dimensions and measures. Dimensions also accept `is_entity`, `is_event_timestamp`, `is_time_dimension`, `smallest_time_grain` and `derived_dimensions`. | `yaml.py`, `_parse_expression_config` | Code |
+| BSL-02 | `metadata` is a free-form dict. It is kept on the `Dimension` and `Measure` objects and appears in `json_definition`. | `ops/_values.py`; spike E-01 | Code |
+| BSL-03 | A model accepts only these top-level keys: `table`, `description`, `database`, `dimensions`, `measures`, `calculated_measures`, `joins`, `filter`, `profile`. An unknown key causes `DefinitionError`. Model-level connector settings therefore cannot be top-level model keys. | `yaml.py`, `_MODEL_KEYS` | Code |
+| BSL-04 | A calculated measure is a function of a scope. It refers to other measures by name. It can call `.all()` for totals, for example percent of total. | `yaml.py`, `_parse_calc_measure` | Code |
+| BSL-05 | A base measure resolves to an Ibis reduction node: `CountStar`, `Sum`, `Mean`, `Max`, `CountDistinct`, `Median`. The connector can read the node type. | Spike E-02 | Code |
+| BSL-06 | BSL ships a FastAPI server. It has the routes `/health`, `/models`, `/models/{name}/schema`, `/query` and others. `create_app` accepts an `auth_hook` or an API key (`BSL_API_KEY`). The key goes in the `X-BSL-API-Key` header or as a bearer token. The query `limit` is at most 100,000. | `server/api.py` | Code |
+| BSL-07 | BSL filter dicts support `=`, `!=`, `<`, `<=`, `>`, `>=`, `like`, `not like`, `ilike`, `not ilike`, `in`, `not in`, `is null`, `is not null`, and nested `AND` / `OR`. They do not support regular expressions. | `predicate.py`; spike E-07 | Code |
+| BSL-08 | A callable filter with Ibis `re_search` gives regular expression filtering. | Spike E-07 | Code |
+| BSL-09 | `time_range` requires the time dimension in the query dimensions. The connector must send the Data Studio date range as a normal filter. | `query.py`; spike E-08 | Code |
+| BSL-10 | BSL has an internal analyzer for calculated measures (`calc_analyzer.py`). It is internal and can change. The connector must not depend on it. | `calc_analyzer.py` | Code |
+| BSL-11 | BSL uses the MIT license. It requires `ibis-framework` 11.x. | Package metadata | Code |
+| BSL-12 | BSL supports all engines that Ibis supports, for example DuckDB, Snowflake, BigQuery and PostgreSQL. | [BSL README](https://github.com/boringdata/boring-semantic-layer) | Doc |
+
+## 7. Metric classification: "prove safe or exclude"
+
+### 7.1 Why the rule is necessary
+
+Data Studio receives rows at the grain of the requested dimensions (LS-11). It then aggregates these rows again for coarser grains and for the summary row. A measure gives correct values only when this second aggregation is correct. Spike results ([`spike_bsl_data_studio.py`](../spikes/spike_bsl_data_studio.py), [`spike_distinct_and_limits.py`](../spikes/spike_distinct_and_limits.py), [`spike_function_semantics.py`](../spikes/spike_function_semantics.py)):
+
+| Experiment | Result | Conclusion |
+|---|---|---|
+| E-04 | Sum, count, max, ratio of sums and decomposed mean, re-aggregated from (origin, date) to (origin), are equal to the BSL values. | Decomposable measures are safe. |
+| E-05 | True total of `distance_per_flight` is 300.0. The sum of the row ratios is 983.33. A formula on the summed bases gives 300.0. | Ratios must be formulas on additive bases. |
+| E-05 | `avg_distance` (mean) is 360.0. `total_distance / flight_count` is 300.0, because one distance is NULL. | The mean helper count must be the non-NULL count of the column, not `COUNT(*)`. |
+| E-06 | Distinct carriers: total 3, sum of per-origin values 5. | A distinct count is not decomposable as a number. Section 7.6 gives a formula translation that is correct. |
+| E-09 | `COUNT_DISTINCT` calculated on rows grouped by (origin, carrier) equals BSL `nunique` for each origin and for the total. | Distinct counts are correct as a Data Studio formula in grouped mode. |
+| E-10 | BSL `nunique` does not count the NULL carrier. | NULL handling must match in Data Studio (U-15). |
+| E-11 | `MEDIAN` on rows grouped by (origin, delay) gives 3 for JFK. The true median is 1. On raw rows it gives 1. | Median needs raw mode. |
+| E-13 | For 95, 100, 92: Ibis population std = 3.3 and population variance = 10.89, equal to the Data Studio examples. The Ibis default (sample) std is 4.0. | Map `how="pop"` directly. Map `how="sample"` with a correction factor. |
+| E-14 | Ibis `quantile(0.305)` on DuckDB = 93.83, equal to the Data Studio example. It compiles to `quantile_cont`. | Percentile parity on DuckDB. |
+| E-15 | The Ibis `Sum` and `CountDistinct` nodes keep the `where` condition. A conditional sum re-aggregates correctly. | The classifier can read conditional aggregations. |
+| E-16 | Ibis compiles `re_search` to `regexp_matches` on DuckDB. The two regex examples of the Data Studio filter reference give the documented rows. | Regex pushdown is safe on DuckDB. |
+| E-17 | Nested BSL `AND` / `OR` filter dicts with `!=` reproduce the Data Studio filter semantics. | Filter translation is possible without custom code. |
+| E-18 | Distinct users by day, 28 days, 2,000 users each day: `compute: data_studio` returns 56,000 rows, `compute: bsl` returns 28 rows. Both give the correct value for each day. | `compute: bsl` removes the row explosion. |
+| E-19 | With `compute: bsl`, the sum of the daily values for each month and for the total is larger than the true distinct count. With `compute: data_studio`, month and total are correct. | A BSL-computed metric is correct only at the exact requested grain. |
+| E-21 | Hypothesis generated 60 random tables (with NULLs and duplicates) and random grains. Count, sum, max and decomposed mean, re-aggregated from the finest grain, equal BSL in every case, also without dimensions (scorecard). | Property-based tests are a practical core for the simulator. The simulator must model SUM of only NULLs as NULL (U-19). |
+| E-20 | With `compute: bsl`, an extra grouping field in the request (channel) gives a daily sum larger than the true value. | A BSL-computed metric must not share a request with raw fields of other metrics. |
+
+### 7.2 Classification flow
+
+```mermaid
+flowchart TD
+  A["BSL measure"] --> B{"metadata.looker_studio.expose = false?"}
+  B -- yes --> X["Exclude"]
+  B -- no --> C{"Calculated measure?"}
+  C -- no --> D{"Ibis node type"}
+  D -- "Sum, Count, CountStar" --> S["Base metric, SUM"]
+  D -- "Min / Max" --> M["Base metric, MIN / MAX"]
+  D -- "Mean" --> V["Formula SUM($x__sum) / SUM($x__count)<br/>+ 2 hidden helpers"]
+  D -- "CountDistinct" --> CD["Formula COUNT_DISTINCT($x__value)<br/>grouped mode + row guard"]
+  D -- "Median, Quantile, StandardDev, Variance" --> R{"allow_raw_mode = true?"}
+  R -- yes --> RM["Formula MEDIAN / PERCENTILE / STDDEV / VARIANCE<br/>raw mode + row guard"]
+  R -- no --> N["Not decomposable"]
+  D -- "other" --> N
+  C -- yes --> E{"Uses .all() or a window?"}
+  E -- yes --> N
+  E -- no --> F{"Only + - * / and literals<br/>over decomposable measures?"}
+  F -- yes --> G["Formula over the bases"]
+  F -- no --> N
+  N --> O{"metadata.looker_studio.compute = bsl?"}
+  O -- yes --> P["BSL-computed metric<br/>isReaggregatable = false + warning"]
+  O -- no --> X
+```
+
+### 7.3 Mapping rules
+
+| BSL form | Data Studio field | Evidence |
+|---|---|---|
+| `sum`, `count`, `count()` | Metric, `SUM` | E-04 |
+| `min`, `max` | Metric, `MIN` or `MAX` | E-04 |
+| `mean` of column x | Formula `SUM($m__sum) / SUM($m__count)`, aggregation `AUTO`. Helpers are hidden. `m__count` counts non-NULL x. | E-04, E-05, LS-04, LS-05, LS-08 |
+| Calculated measure, arithmetic over decomposable measures | Formula over the base fields, aggregation `AUTO` | E-03, E-04 |
+| Calculated measure with `.all()` | Excluded | E-03, BSL-04 |
+| `nunique` | Formula `COUNT_DISTINCT($x__value)` over a hidden raw dimension (section 7.6) | E-09, LS-28 |
+| `median`, quantiles | Opt-in raw mode formula (section 7.6). Otherwise excluded. | E-11, LS-28 |
+| Other reductions | Excluded, or `compute: bsl` (section 7.7) | LS-09 |
+| Conditional aggregation (Ibis `where=`) | Treat as its reduction type. Distinct counts use `CASE` inside `COUNT_DISTINCT` (section 7.6). | E-15, LS-40 |
+
+**Formula rules.** A formula field cannot be hidden (LS-08). Data Studio drops an invalid formula without an error (LS-06). Therefore a contract test must parse every generated formula and check every `$` reference against the schema.
+
+**Nested formulas.** A calculated measure can refer to another calculated measure. The connector must expand the formula down to base fields. It must not refer to another formula field. Status: U-09.
+
+### 7.4 Governance in Data Studio
+
+1. Turn off "Field editing in reports" on each data source (LS-22). Then report editors cannot change the aggregation of a metric.
+2. Keep the connector-generated formulas. Data Studio does not let users edit them in the fields editor (LS-07).
+3. Put the model version in each field description (D-06). The descriptions are plain text (LS-03).
+
+Users can still create their own calculated fields in reports. The connector cannot prevent this. Field descriptions must therefore state the correct use of each metric.
+
+### 7.5 Override metadata
+
+The override key is `metadata.looker_studio` on a dimension or measure (D-11). A model-level key is not possible (BSL-03).
+
+| Key | Type | Effect |
+|---|---|---|
+| `expose` | bool | False excludes the field. |
+| `label` | string | Data Studio label. The default is the BSL name in title case. |
+| `group` | string | Data Studio field group. |
+| `semantic_type` | string | Data Studio semantic type, for example `CURRENCY_EUR` or `PERCENT`. |
+| `compute` | `auto`, `data_studio`, `bsl` or `both` | Compute location (section 7.7). The default is `auto`. |
+| `primary_time` | bool | Marks the primary time dimension (D-15). Use it only when a model has more than one time dimension. |
+| `allow_raw_mode` | bool | True permits a raw mode translation (section 7.6). The default is false. |
+| `max_rows` | int | Row cap for this measure. The default is the global cap (section 10.3). |
+
+### 7.6 Formula translation catalog
+
+Some BSL aggregations do not decompose as numbers, but Data Studio has an equivalent aggregation function (LS-28). For these, the connector writes a formula over a hidden raw field. Data Studio then calculates the aggregation from the rows that the connector returns. Data Studio formulas can use hidden fields (LS-08).
+
+The raw field is a hidden dimension, for example `carrier__value`. It must be a dimension, because `COUNT_DISTINCT` does not accept metrics (LS-40). It holds the column values. When Data Studio requests it, the API must return those values in the rows. This increases the number of rows.
+
+**Row modes.**
+
+1. **Grouped mode.** The API groups by all requested dimensions, including raw fields. Grouping removes duplicate values. This is correct only for functions that ignore duplicates: `COUNT_DISTINCT`, `MIN`, `MAX` (E-09).
+2. **Raw mode.** The API returns one row for each source row, without grouping. Functions that depend on duplicates need raw mode: `MEDIAN`, `PERCENTILE` (E-11). Sum helpers stay correct in raw mode, because sums decompose.
+
+The API selects raw mode when the request contains the raw field of a raw-mode measure. Otherwise it uses grouped mode.
+
+| BSL (Ibis node) | Data Studio formula | Row mode | Status | Rows returned |
+|---|---|---|---|---|
+| `CountDistinct(x)` | `COUNT_DISTINCT($x__value)` | Grouped | Code (E-09). Default on. | Sum over groups of distinct x |
+| `CountDistinct(x)` with `where=` | `COUNT_DISTINCT(CASE WHEN <condition> THEN $x__value END)` | Grouped | The Ibis node keeps `where` (E-15). `COUNT_DISTINCT` accepts a non-aggregated expression (LS-40). The condition fields must also be raw dimensions. | Larger |
+| `ApproxCountDistinct(x)` | `APPROX_COUNT_DISTINCT($x__value)` | Grouped | Unverified. | Sum over groups of distinct x |
+| `Median(x)` | `MEDIAN($x__value)` | Raw | Code (E-11). Opt-in. | All filtered source rows |
+| `Quantile(x, q)` | `PERCENTILE($x__value, 100*q)` | Raw | Linear interpolation, equal to Ibis `quantile` on DuckDB (LS-39, E-14). Check the quantile method of other backends. Opt-in. | All filtered source rows |
+| `StandardDev(x, how="pop")` | `STDDEV($x__value)` | Raw | Population statistic (LS-39, E-13). Opt-in. | All filtered source rows |
+| `StandardDev(x, how="sample")` (Ibis default) | `STDDEV($x__value) * SQRT(COUNT($x__value) / (COUNT($x__value) - 1))` | Raw | Arithmetic proven (E-13). Data Studio `COUNT` NULL handling is not verified (U-15). Opt-in. | All filtered source rows |
+| `Variance(x, how="pop")` | `VARIANCE($x__value)` | Raw | Population statistic (LS-39, E-13). Opt-in. | All filtered source rows |
+
+**Rules.**
+
+1. Grouped-mode distinct counts are exact and correct for each grain and for the totals (E-09). The summary row is also correct if U-02 holds.
+2. In grouped mode, `MEDIAN` gives a wrong result without an error (E-11: 3 in place of 1). The classifier must never put a raw-mode function in grouped mode.
+3. BSL `nunique` ignores NULL (E-10). The Data Studio behavior is not known (U-15). Do not enable distinct counts on nullable columns before U-15 is verified.
+4. Every translated measure has a row guard (section 10.3).
+
+### 7.7 Compute location
+
+Each exposed measure has one compute location. The override key is `metadata.looker_studio.compute` (section 7.5).
+
+| Value | Who calculates the value | Rows returned | Correct for |
+|---|---|---|---|
+| `data_studio` | Data Studio, with a formula over base fields (7.3) or raw fields (7.6) | Grouped or raw rows (7.6) | Every grain, the summary row and date-grain changes (E-04, E-09) |
+| `bsl` | BSL, for each group of the requested dimensions. The field has `isReaggregatable` false (LS-09). | One row for each group (E-18) | Only the exact requested grain (E-19, E-20) |
+| `auto` (default) | `data_studio` when the classifier can prove it safe (7.2). Otherwise the measure is excluded. | | |
+| `both` | Two fields from one BSL measure: the `data_studio` field keeps the measure ID; the `bsl` field gets the ID suffix `__bsl` (LS-02), the label suffix "(fixed grain)" and the warning (R-10). | As for each single value | As for each single value |
+
+**Why both are necessary.** `data_studio` is always correct, but distinct counts and raw-mode functions can exceed the row limits (section 10.2, items 3 and 4). `bsl` keeps the rows small: 28 rows in place of 56,000 in E-18. But a BSL-computed value is wrong when Data Studio aggregates it again (E-19).
+
+**Where `bsl` is safe.**
+
+1. A table or chart whose dimensions are exactly the requested grain, without a summary row.
+2. A scorecard without dimensions, if U-05 holds.
+
+**Where `bsl` is not safe or not known.**
+
+1. Summary rows. Data Studio cannot calculate the total from the group values (E-19). The display is not known (U-03).
+2. Date-grain changes. If Data Studio requests days and buckets them to months itself, the month values are wrong (E-19, U-06).
+3. Charts that also contain a `data_studio` metric with raw fields. The request then contains extra grouping fields (E-20).
+4. Chart filters on the metric (LS-24, U-07).
+
+**Rules.**
+
+1. The API calculates BSL-computed measures at the requested dimensions without raw fields. When a request contains a BSL-computed measure together with raw fields of other measures, the API returns an error (R-09).
+2. The field description of a BSL-computed measure states that the value is correct only at the shown grain (R-10).
+3. The API never changes the compute location by itself, for example when a row guard fails. The guard returns an error (R-01). A silent change would give different numbers for the same metric.
+4. `compute: both` exposes one BSL measure as two fields (D-28). The exact `data_studio` field keeps the plain name, so the safe field is the default choice for report editors. The `bsl` field is the fast option for fixed-grain charts and for limits (E-18). Both fields come from one definition in git, so they cannot drift apart. `both` is valid only when the classifier can build the `data_studio` field. Otherwise schema generation fails with an error. Data Studio does not tell the connector the chart type, so the connector cannot select one of the two fields at run time. The report editor selects the field.
+
+## 8. Request translation
+
+### 8.1 Fields
+
+| Data Studio request | API action |
+|---|---|
+| Dimension field | `group_by` that dimension. Map `__` back to `.` for join fields (LS-02). |
+| Base metric or helper field | Aggregate the base measure. |
+| Formula field | Data Studio requests the referenced base fields. Unverified, see U-01. |
+| Time dimension | Return `YYYYMMDD` strings (LS-18). |
+| Raw field (`x__value`) | Group by it (grouped mode), or return source rows without grouping (raw mode). See section 7.6. |
+| `sampleExtraction` true | Return a small sample. The schema sets semantic types, so detection is off (LS-10). The request can still occur. |
+
+### 8.2 Filters
+
+The API translates each Data Studio clause to a BSL filter. If one clause cannot be translated, the API applies no filters and sets `filtersApplied` to false (LS-16). This fallback is safe for decomposable metrics, because the response then also groups by the filter fields.
+
+| Data Studio operator | INCLUDE | EXCLUDE |
+|---|---|---|
+| EQUALS | `=` | `!=` |
+| IN_LIST | `in` | `not in` |
+| CONTAINS | `like '%v%'` (escape `%` and `_`) | `not like` |
+| IS_NULL | `is null` | `is not null` |
+| BETWEEN | `>=` and `<=` | `<` or `>` |
+| NUMERIC_* | `>`, `>=`, `<`, `<=` | the inverse operator |
+| REGEXP_PARTIAL_MATCH | callable, `re_search(v)` (BSL-08) | negated callable |
+| REGEXP_EXACT_MATCH | callable, `re_search('^(?:v)$')` | negated callable |
+
+Inner arrays become `OR`. Outer arrays become `AND` (LS-14, E-17). Data Studio uses RE2 (LS-38). The API pushes regular expressions down only to RE2 backends, for example DuckDB (E-16, D-24). For other backends, it sets `filtersApplied` to false, and Data Studio applies the filter.
+
+### 8.3 Date range
+
+The API adds the date range as `>=` and `<=` filters on the primary time dimension. It does not use BSL `time_range`, because that needs the time dimension in the query (BSL-09).
+
+## 9. Test strategy
+
+### 9.1 Principle
+
+An agent must be able to run all tests without Google services. The connector is thin, so almost all behavior is in Python. One command, `make check`, runs all tests.
+
+### 9.2 Test layers
+
+```mermaid
+flowchart TB
+  L1["1. Unit tests<br/>classifier, formula builder, filter translator"]
+  L2["2. Contract tests<br/>schema JSON vs. documented field format,<br/>formula references, ID charset, unique IDs"]
+  L3["3. Simulator equivalence tests<br/>chart spec -> getData -> re-aggregate -> compare with BSL"]
+  L4["4. Golden fixture tests<br/>real Data Studio requests replayed"]
+  L5["5. Connector tests in Node<br/>gas-fakes + own DataStudioApp fake"]
+  L5b["5b. Remote connector tests<br/>clasp run in real Apps Script"]
+  L6["6. Manual smoke test<br/>real report, after major changes"]
+  L1 --> L2 --> L3 --> L4 --> L5 --> L5b -.-> L6
+```
+
+### 9.3 Simulator
+
+The simulator takes a chart spec. The chart spec is a project format. Data Studio has no public chart format.
+
+```yaml
+dimensions: [origin]
+metrics: [distance_per_flight, flight_count]
+filters: [[{field: carrier, operator: IN_LIST, type: INCLUDE, values: [AA]}]]
+date_range: {start: 2026-01-01, end: 2026-03-31}
+summary_row: true
+```
+
+The simulator does these steps:
+
+1. Expand each formula metric to its base fields.
+2. Add filter fields as `forFilterOnly` fields.
+3. Build a getData request with the documented format (LS-11, LS-14, LS-17).
+4. Split the request when it has more than 20 fields (LS-13).
+5. Send the request to the API.
+6. Aggregate the rows and evaluate the formulas as Data Studio does, including `COUNT_DISTINCT` and `MEDIAN` on raw fields. Calculate the summary row from totals (LS-23).
+7. Compare each value with a direct BSL query. Use a tolerance for floating point values.
+
+Generate chart specs for each exposed metric with each dimension, pairs of dimensions, no dimension, with and without filters. A metric that fails one comparison must not ship.
+
+### 9.4 Golden fixtures
+
+The simulator is a model of Data Studio. Golden fixtures keep the model correct. Do these steps once, and again after Data Studio changes:
+
+1. Deploy the connector to a test deployment. Open it with a direct link that sets `connectorConfig` (LS-35).
+2. Log each request body in the API.
+3. Build these charts: a table with a summary row, a scorecard, a filtered table, a table with a date range control, and a time series by month.
+4. Save each request as a JSON file in `tests/fixtures/`.
+5. Write the equivalent chart spec next to it.
+6. Add a test: the simulator must generate a request equal to the fixture.
+
+### 9.5 Local stack
+
+- Use DuckDB with seed data. Tests need no warehouse credentials (D-02).
+- Use the `spikes/` script as the first equivalence test.
+- Run the connector code in Node with mocks.
+
+### 9.6 Google tools and APIs
+
+No documented Google API runs a report or returns chart data. The Data Studio API manages assets only (LS-36). The Linking API and direct links only open Data Studio with a configuration (LS-35, LS-37). The getData behavior of Data Studio can therefore only be observed through the requests that reach the API (golden fixtures).
+
+| Tool | Use in this project | Claim |
+|---|---|---|
+| `@types/google-apps-script` | Types for the TypeScript connector and its Node mocks. Add the missing `forFilterOnly` property locally. | LS-43 |
+| `@google/clasp` | Push the connector, manage deployments, use in CI. | LS-26, LS-43 |
+| `@google/dscc-gen` | Optional project scaffold with `try_latest` and `update_production` scripts. | LS-26, LS-43 |
+| Direct link with `connectorConfig` | Open a test data source with a fixed configuration in one click. Use it in the golden fixture procedure. | LS-35 |
+| Linking API | Create the golden fixture report again from a template report. Community connector support needs a check. | LS-37 |
+| Data Studio API | Not useful for tests. Only for asset management in Workspace organizations. | LS-36 |
+| BSL FastAPI server | Base for the API (O-01). | BSL-06 |
+| `clasp run` with a test wrapper | Run `getSchema` and `getData` in the real Apps Script runtime from Node tests (section 14.1, Matomo). | Section 14.1 |
+
+## 10. Limits and usage impact
+
+This section contains only proven limits. Section 10.2 calculates their effect from the proven numbers. Open questions are in section 12.
+
+### 10.1 Proven limits
+
+| Limit | Value | Claim |
+|---|---|---|
+| Rows in one getData response | 1,000,000 | LS-12 |
+| Fields in one getData request | 20. More fields cause more than one request. | LS-13 |
+| Apps Script runtime | 6 minutes per execution | LS-25 |
+| URL Fetch response size | 50 MB per call | LS-25 |
+| URL Fetch POST body size | 50 MB per call | LS-25 |
+| URL length | 2 KB | LS-25 |
+| URL Fetch calls per user per day | 20,000 (consumer account), 100,000 (Workspace account) | LS-25 |
+| Simultaneous executions | 30 per user, 1,000 per script | LS-30 |
+| Manual data refresh cooldown | 1 minute | LS-29 |
+| Response size per row (getData JSON) | 37 bytes (date, dimension, metric), 63 bytes (date, UUID), 88 bytes (8 columns) | E-12 |
+| BSL server `/query` limit | 100,000 rows | BSL-06 |
+
+Google can change the Apps Script limits without notice (LS-30).
+
+### 10.2 What the limits mean for usage
+
+Status of each item: **Derived** (a calculation from the proven values in section 10.1).
+
+1. **Effective rows per request.** The cap is the lower of 1,000,000 rows and 50 MB. Narrow rows reach the row limit first (50 MB holds about 1.4 million rows of 37 bytes). Wide rows reach the size limit first: about 830,000 rows with a UUID, about 595,000 rows with 8 columns (E-12).
+2. **Decomposable metrics are not at risk.** Rows equal the number of distinct combinations of the requested dimensions. Example: 365 days × 50 countries × 3 devices = 54,750 rows.
+3. **Distinct counts of high-cardinality IDs are at risk.** Rows equal the sum, over the groups, of the distinct IDs. Example: daily users by day for the default 28 days, with 50,000 users each day, is up to 1,400,000 rows. That is more than the row limit. At 63 bytes for each row it is also about 88 MB, more than the size limit. Distinct counts of low-cardinality values (carriers, countries, products) are safe. For high-cardinality IDs, `compute: bsl` returns one row for each group (section 7.7, E-18).
+4. **Raw mode works only for small data.** Rows equal all source rows after filters and the date range.
+5. **URL Fetch quota.** The connector sends one URL Fetch call for each getData request. This is a design rule. A page with 10 charts and no cached data uses about 10 calls. One Workspace quota therefore permits about 10,000 such page loads each day. One consumer quota permits about 2,000. The quota of the effective user applies (LS-32, LS-25). With owner's credentials, all viewers of all reports on that data source use the quota of the data source owner.
+6. **Concurrency.** The limit is 30 simultaneous executions for each effective user (LS-30, LS-32). With owner's credentials, all viewers share the 30 executions of the owner. Many viewers at the same time can reach this limit. A connector vendor gives similar advice (LS-31).
+7. **Time.** Each getData request must complete in less than 6 minutes. This includes the warehouse query, the transfer to Apps Script and the parse in Apps Script.
+8. **Cross-filtering.** Cross-filtering is on by default and can add requests (LS-44). Each added request uses quota (item 5).
+9. **Caching.** Data Studio serves repeated queries from memory (LS-29). With owner's credentials, all viewers share this memory. This decreases URL Fetch calls and warehouse queries. With viewer's credentials, each viewer causes their own calls, but each viewer also has their own quota and concurrency. Each viewer must also authorize the connector.
+10. **BSL server limit.** The BSL `/query` route permits at most 100,000 rows (BSL-06). This is less than the getData limit. The Data Studio route must not inherit this limit without a decision (O-01).
+
+### 10.3 Design rules from the limits
+
+| ID | Rule | Reason |
+|---|---|---|
+| R-01 | Never truncate. Query with `LIMIT cap + 1`. When the result has `cap + 1` rows, return an error that names the measure and the cap. The connector shows it with `newUserError()` (LS-34). | A truncated response gives wrong numbers without an error. Items 1, 3, 4. |
+| R-02 | Set the global cap to 500,000 rows. A measure can set a lower cap with `max_rows`. | Item 1: the size limit applies near 595,000 rows for wide rows. |
+| R-03 | Send each request as a POST body. | URL length is 2 KB (LS-25). |
+| R-04 | Set the API timeout below 6 minutes, for example 300 seconds. Return a clear error on timeout. | Item 7. |
+| R-05 | For shared reports with a small audience, use owner's credentials with a dedicated Workspace account as data source owner. For a large audience, use viewer's credentials. | Items 5, 6 and 8: owner's credentials give one shared cache, but also one quota and one concurrency limit. |
+| R-08 | Document the prerequisite: the Workspace organization must permit community connectors and Apps Script. | LS-33. |
+| R-06 | Recommend fewer than 30 data components on one report page. | Item 6. |
+| R-07 | For distinct counts of high-cardinality IDs, use `compute: bsl` on charts with a fixed grain (section 7.7). | Item 3; E-18. |
+| R-09 | Reject a request that contains a BSL-computed measure and raw fields of other measures. | E-20. |
+| R-10 | Generate a description warning for each BSL-computed measure: correct only at the shown grain, not in totals. | E-19. |
+
+## 11. Release readiness
+
+### 11.1 Stages
+
+```mermaid
+flowchart LR
+  A["Internal<br/>own deployment,<br/>KEY auth"] --> B["Open source<br/>MIT, users deploy<br/>their own connector"] --> C["Partner Connector<br/>Gallery listing"]
+```
+
+### 11.2 Findings that affect early design
+
+1. **One connector, many APIs.** Each user of the open-source project runs their own API. A published connector therefore cannot have a fixed API URL. The `PATH_KEY` auth type collects a path and a key (LS-20). The path can hold the API base URL. Recommendation: use `PATH_KEY` from version 1. Status: open item O-02.
+2. **URL allowlist.** A Partner Connector needs a `urlFetchWhitelist` or a written exception (LS-27). A user-supplied URL needs the exception.
+3. **OAuth verification.** Google requires OAuth client verification for all Partner Connectors, also for key authentication (LS-27). Plan time for this process.
+4. **Name.** Do not use the word "connector" in the name (LS-27). Use "Data Studio" only to describe compatibility, not as a brand.
+5. **License.** BSL uses MIT (BSL-11). MIT is the recommended license for this project.
+6. **Quotas.** Each user has a daily URL Fetch quota (LS-25). Section 10 gives the effect on usage. The API cache (D-19) reduces warehouse queries, but not URL Fetch calls.
+7. **Request size.** A URL can have at most 2 KB (LS-25). Send requests as POST bodies.
+
+## 12. Unverified claims: required tests
+
+### 12.1 Resolved by research or spike
+
+| ID | Resolution | Evidence |
+|---|---|---|
+| U-08 | The Ibis node keeps the `where` condition. A conditional sum decomposes. A conditional distinct count becomes a `CASE` expression inside `COUNT_DISTINCT`. | E-15, LS-40 |
+| U-09 | Removed by decision D-23. | D-23 |
+| U-10 | Data Studio and DuckDB both use RE2. The documented filter examples give the same result on DuckDB. Other backends fall back to `filtersApplied` false. | LS-38, E-16, D-24 |
+| U-11 | Removed by decision D-22: the connector uses the documented builder with `$` references. | D-22, LS-04 |
+| U-13 | The effective user's quota applies: the owner with owner's credentials, the viewer with viewer's credentials. | LS-32, LS-25 |
+| U-18 | `PERCENTILE` uses linear interpolation. `STDDEV` and `VARIANCE` are population statistics. | LS-39, E-13, E-14 |
+
+### 12.2 Open: needs a real Data Studio report
+
+U-03, U-05, U-06 and U-07 also decide where `compute: bsl` is safe (section 7.7). These questions are about the internal behavior of Data Studio. No documentation and no API gives the answer (section 9.6). Each needs a golden fixture or a manual test. U-16 has secondary evidence of a Data Studio timeout (LS-42), but no value. U-15 has documentation that NULL handling can differ between systems (LS-40), but no statement for community connectors.
+
+| ID | Question | How to verify |
+|---|---|---|
+| U-01 | Does Data Studio request only the base fields of a formula metric in getData? | Golden fixture with a formula metric. |
+| U-02 | Does the summary row evaluate the formula from summed bases (LS-23)? | Golden fixture plus a visual check of one report. |
+| U-03 | What does the summary row show for a metric with `isReaggregatable` false? | Manual test. Record the result in this document. |
+| U-04 | How does Data Studio join the responses of a request split at 20 fields (LS-13)? | Chart with more than 20 fields. Compare the result with BSL. |
+| U-05 | Does a scorecard send a getData request with metrics only and no dimensions? | Golden fixture. |
+| U-06 | For a time series by month, does Data Studio request the day field and aggregate itself? | Golden fixture. |
+| U-07 | Do filters on charts with non-reaggregatable metrics cause LS-24 errors? | Manual test. |
+| U-14 | Can a metric formula refer to a hidden dimension? Does Data Studio then request that dimension in getData? | Golden fixture with `COUNT_DISTINCT($x__value)`. |
+| U-15 | Does Data Studio `COUNT_DISTINCT` count NULL as a value? | Golden fixture with a NULL value. Compare with E-10. |
+| U-16 | Does Data Studio stop waiting for getData before the 6-minute Apps Script limit? | API endpoint with a configurable delay. |
+| U-19 | Does Data Studio show NULL or 0 for `SUM` over rows that are all NULL? | Golden fixture. The simulator models NULL (E-21). |
+| U-20 | Which SQL does the native PostgreSQL connector send for a table body, a summary row, a scorecard, a filter and a date-grain change? Does it send a separate query for the summary row? | Statement log of a plain PostgreSQL database (section 14.3). |
+| U-17 | Which data freshness options does Data Studio offer for this connector? | Check the data source settings after the first deployment. |
+
+## 13. Open items
+
+| ID | Item | Owner |
+|---|---|---|
+| O-01 | Extend the BSL FastAPI app, or build a separate app that only uses BSL as a library (section 4.3). | Team |
+| O-02 | Use `PATH_KEY` from version 1 (section 11.2). | Team |
+| O-03 | Detailed design of all parts (section 13.1). | Wayfinder |
+| O-04 | Production cache design, for example Redis (D-19). | Later |
+| O-05 | Evaluate the PostgreSQL-protocol alternative (sections 14.1 and 14.3): expose BSL through the PostgreSQL wire protocol and use the native PostgreSQL connector. This avoids the Apps Script limits, but Data Studio then generates SQL that the API must translate. | Later |
+
+### 13.1 Handover to Wayfinder
+
+Wayfinder specifies the detailed design of each part below. Each part lists its inputs in this document.
+
+| Part | Inputs |
+|---|---|
+| API contract (`/schema`, `/data`, errors) | Section 4, 8, BSL-06, LS-11, LS-16, R-01, R-03, R-04 |
+| Schema generation (fields, formulas, helpers, IDs, labels, descriptions) | Section 7, D-11, D-22, D-23, D-28, LS-02 to LS-10 |
+| Metric classifier and compute location | Section 7.2, 7.6, 7.7, D-10, D-20, D-25, E-02 to E-20 |
+| Request translation (fields, filters, date range, row modes) | Section 8, D-24, BSL-07 to BSL-09, E-16, E-17 |
+| Limits and guards | Section 10, D-21, R-01 to R-10 |
+| Simulator and test system | Section 9, D-16, E-21, U-01 to U-20 |
+| Connector (TypeScript, auth, deployment) | D-13, D-18, D-26, LS-20, LS-32, section 14 |
+| Versioning and environments | D-06, D-12 |
+| Caching | D-19, O-04, LS-29 |
+| Release and publishing | Section 11, LS-27 |
+| PostgreSQL-protocol alternative | Section 14.3, O-05, U-20 |
+
+## 14. Prior art and libraries
+
+Repository facts were read from the downloaded source code on 2026-11-14 (file paths given). Package versions and licenses come from the npm and PyPI registries on the same date.
+
+### 14.1 Open-source connectors and other prior art
+
+| Project | Type, license, last push | What to learn | Evidence |
+|---|---|---|---|
+| [matomo-org/looker-studio-connector](https://github.com/matomo-org/looker-studio-connector) | Official Matomo connector. GPL-3.0-or-later. 2026-11-05. | **Best reference for tooling.** TypeScript, rollup and `clasp`. Automated Jest tests run connector functions in the real Apps Script runtime with `clasp run` and a `callFunctionInTest` wrapper, and compare the result with expected JSON files. Fetches data in chunks to stay below the 50 MB URL Fetch limit. All metrics have `isReaggregatable` false. Uses `CacheService.getUserCache()` and `newUserError()`. | `package.json`, `TESTS.md`, `tests/utilities/clasp.ts`, `src/data.ts`, `src/error.ts` |
+| [googledatastudio/community-connectors](https://github.com/googledatastudio/community-connectors) | Official Google samples. Apache-2.0. 2021-09-06. | Reference implementations (JSON, CSV, Athena, Firestore). The `dscc-scripts` workflow keeps `production` and `latest` deployment IDs in `package.json`. | `fetch-csv/package.json` |
+| [anouardbt/dbt-sl-looker-studio](https://github.com/anouardbt/dbt-sl-looker-studio) | dbt Semantic Layer connector. README says MIT, no LICENSE file. 2024-09-26. | Closest analogue. Reads metrics and descriptions from the dbt GraphQL API. All metrics are plain `NUMBER` metrics with default aggregation, so ratios are re-aggregated wrongly. Uses a Python Cloud Function to decode Arrow responses. | `src/Code.gs`, `src/cloud_function/app.py` |
+| [chaos87/datastudio_cube_connector](https://github.com/chaos87/datastudio_cube_connector) | Cube connector. No license. 2023-03-10. | Reads `/meta`, queries `/load`. The user selects measures, dimensions and a time grain in the configuration. Metrics also use default aggregation. | `Code.gs`, `ApiHandler.gs` |
+| [canyousayyes/datastudio-aws-athena-connector](https://github.com/canyousayyes/datastudio-aws-athena-connector), [victorcouste/trino-datastudio-connector](https://github.com/victorcouste/trino-datastudio-connector) | SQL engine connectors. MIT / no license. 2020 / 2022. | Anti-pattern: a user `rowLimit` becomes a SQL `LIMIT`, which truncates without an error (compare R-01). | `src/athena.js`, `src/trino.js` |
+| AtScale | Commercial semantic layer, Partner Connector. Closed source. | A semantic layer can pass the Partner Connector review. | [AtScale docs](https://documentation.atscale.com/container/connecting-to-atscale-from-business-intelligence-software/google-data-studio/atscale-data-studio-connector) |
+| Google Looker connector | Google's native semantic layer connector. | Google limits charts to 5,000 rows and permits calculated fields only on dimensions (LS-45). This confirms the governance problem of section 7.4. A community connector cannot apply the same restriction. | LS-45 |
+| Cube, Timbr | Semantic layers that use the native PostgreSQL connector. | Alternative architecture without Apps Script (O-05). | [Cube](https://cube.dev/integrations/looker-studio-semantic-layer-with-cube), [Timbr](https://timbr.ai/?p=5451) |
+
+**Conclusion.** The two open-source semantic-layer connectors expose metrics with default aggregation. They do not prevent wrong totals for ratios. The "prove safe or exclude" rule (section 7) and the compute location (section 7.7) are therefore the main differences of this project. The Matomo test harness is the best model for the connector toolchain, but its GPL license prevents code reuse in an MIT project (D-27).
+
+### 14.2 Libraries
+
+**Python (API)**
+
+| Package | Version | Use | Evidence |
+|---|---|---|---|
+| `boring-semantic-layer` | 0.3.19, MIT | Semantic layer, YAML models, FastAPI server | BSL-06, BSL-11 |
+| `ibis-framework`, `duckdb` | 11.0.0, 2.0.0 | Backend abstraction, local and CI backend | All spikes |
+| `fastapi`, `pydantic` | 0.162.7, 2.14.3 | API and request models (BSL server uses both) | `server/api.py`, PyPI |
+| `hypothesis` | 6.170.15, MPL-2.0 | Property-based simulator tests | E-21 |
+| `syrupy` | 7.0.0 | Snapshot tests for golden fixtures and schema output | PyPI |
+| `jsonschema` | 4.26.0 | Contract tests against the documented field format | PyPI |
+| `orjson` | 3.13.0 | Fast JSON for large getData responses | PyPI |
+| `cachetools` | 8.0.0 | In-memory TTL cache (D-19) | PyPI |
+| `sqlglot` | 30.31.0 | Only for O-05: parse SQL from Data Studio | PyPI |
+
+**TypeScript (connector)**
+
+| Package | Version, license | Use | Evidence |
+|---|---|---|---|
+| `@types/google-apps-script` | 2.0.15, MIT | Types for `DataStudioApp`, `UrlFetchApp`, `CacheService` | LS-43 |
+| `@google/clasp` | 3.4.1, Apache-2.0 | Push, deploy, `clasp run` for remote tests | npm, Matomo |
+| `@google/dscc-scripts` | 1.0.17, Apache-2.0 | Optional deployment scripts | npm, Google samples |
+| `rollup-plugin-gas` or `esbuild-gas-plugin` | 1.0.0 / 0.10.0, MIT | Bundle TypeScript into Apps Script with global entry functions | npm |
+| `@mcpher/gas-fakes` | 2.5.8, MIT | Run Apps Script code in Node. Has `UrlFetchApp` and `CacheService`. Has no `DataStudioApp`, so the project needs a small `DataStudioApp` fake. | Package source |
+| `gas-local` | 1.3.1, MIT | Alternative local runner | npm |
+| `jest` | (Matomo uses 29.x) | Test runner for local and remote tests | Matomo `package.json` |
+
+Licenses that are not in the table were not verified. Check them before use.
+
+
+### 14.3 The PostgreSQL-protocol alternative (O-05)
+
+BSL does not speak SQL or the PostgreSQL protocol. BSL takes queries as Python calls or as dicts (BSL-06, BSL-07). This alternative therefore needs four new parts:
+
+| Part | Function | Candidate | Evidence |
+|---|---|---|---|
+| Wire server | Accept PostgreSQL protocol connections from the JDBC driver (LS-46). | `riffq` 0.4.1 (PostgreSQL wire toolkit with `pg_catalog` compatibility), `buenavista` 0.5.0 (Apache, last release 2024-10) | PyPI |
+| Catalog emulation | Answer the metadata queries of the JDBC driver, so that each BSL model appears as a table in `public`. | `riffq` claims `pg_catalog` compatibility | PyPI summary |
+| SQL translation | Parse the generated SQL, remove the outer wrapper, map `GROUP BY` columns to BSL dimensions, map aggregates of measure columns to BSL measures, map `WHERE` to BSL filters. | `sqlglot` 30.31.0 | PyPI |
+| Measure semantics | Data Studio selects the aggregate function of a metric (default SUM). The translator must read any aggregate of a measure column as "this measure at this grain", like Cube's `MEASURE()` (LS-48). | Own code | LS-48 |
+
+**Possible advantages.** No Apps Script quotas, no URL Fetch limits and no 20-field split (LS-13, LS-25). If Data Studio sends a separate SQL query for each grain and for the summary row, BSL computes every value, including distinct counts, at every grain. This is not verified (U-20).
+
+**Known disadvantages.**
+
+1. **No descriptions.** Data Studio fills descriptions only for the Looker and Search Ads 360 connectors (LS-47). The main requirement of this project (descriptions in Data Studio) is then lost.
+2. **No locked formulas, hidden fields or `isReaggregatable`.** The schema is only table columns. Report editors can change the aggregate of each metric (LS-22), and the translator must accept or reject each aggregate.
+3. **Dates.** The documented data types do not include dates (LS-46). Time dimensions may need a conversion in Data Studio. Not verified.
+4. **Network.** The server must be reachable from the Data Studio IP addresses through the firewall. Private IP is not supported (LS-46).
+5. **Effort.** Cube needed a dedicated query rewrite system for SQL with measures (LS-48).
+
+**First step, without BSL.** Point the native PostgreSQL connector at a plain PostgreSQL database with `log_statement = 'all'`. Build a table with a summary row, a scorecard, a filtered table and a monthly time series. Record the SQL. This gives the real query shapes (U-20) at low cost, before any wire server is written.
+
+## 15. References
+
+| Reference | URL |
+|---|---|
+| Data Studio Community Connector API reference | <https://developers.google.com/data-studio/connector/reference> |
+| Calculated fields in connector schemas | <https://developers.google.com/data-studio/connector/calculated-fields> |
+| Connector filters | <https://developers.google.com/looker-studio/connector/filters> |
+| Data types and semantic types | <https://developers.google.com/looker-studio/connector/semantics> |
+| Partner Connector requirements | <https://developers.google.com/data-studio/connector/pscc-requirements> |
+| Local development (`dscc-gen`, `clasp`) | <https://developers.google.com/data-studio/connector/local-development> |
+| Apps Script quotas | <https://developers.google.com/apps-script/guides/services/quotas> |
+| Data Studio function list | <https://docs.cloud.google.com/data-studio/function-list> |
+| Manage data freshness | <https://docs.cloud.google.com/data-studio/manage-data-freshness> |
+| Access user identity | <https://developers.google.com/data-studio/connector/user-identity> |
+| Force viewer's credentials | <https://developers.google.com/data-studio/connector/force-viewers-credentials> |
+| Connector manifest | <https://developers.google.com/looker-studio/connector/manifest> |
+| Connector error handling | <https://developers.google.com/data-studio/connector/error-handling> |
+| Community connector errors | <https://docs.cloud.google.com/data-studio/community-connector-errors> |
+| Direct links | <https://developers.google.com/data-studio/connector/direct-links> |
+| Data Studio API | <https://developers.google.com/data-studio/integrate/api> |
+| Linking API | <https://developers.google.com/data-studio/integrate/linking-api> |
+| COUNT_DISTINCT | <https://docs.cloud.google.com/data-studio/countdistinct> |
+| PERCENTILE | <https://docs.cloud.google.com/data-studio/percentile> |
+| STDDEV | <https://docs.cloud.google.com/data-studio/stddev> |
+| VARIANCE | <https://docs.cloud.google.com/data-studio/variance> |
+| REGEXP_MATCH (RE2) | <https://docs.cloud.google.com/data-studio/regexpmatch> |
+| DuckDB regular expressions (RE2) | <https://duckdb.org/docs/current/sql/functions/regular_expressions> |
+| Civis connector limits (third party) | <https://support.civisanalytics.com/hc/en-us/articles/360043612111> |
+| Connect to PostgreSQL | <https://docs.cloud.google.com/looker/docs/studio/connect-to-postgresql> |
+| Cube SQL API query format | <https://cube.dev/docs/product/apis-integrations/sql-api/query-format> |
+| Edit fields in reports | <https://support.google.com/datastudio/answer/7512288> |
+| Unable to aggregate ratio metrics | <https://docs.cloud.google.com/looker/docs/studio/what-does-the-unable-to-aggregate-ratio-metrics-error-mean> |
+| Re-aggregate data with blending | <https://docs.cloud.google.com/looker/docs/studio/use-blending-to-reaggregate-data> |
+| Summary row behavior (third party) | <https://support.dataslayer.ai/discrepancy> |
+| Aggregation pushdown limitation (forum) | <https://community.databricks.com/t5/warehousing-analytics/databricks-connector-for-looker-studio-no-aggregation-pushdown/m-p/115364> |
+| Boring Semantic Layer repository | <https://github.com/boringdata/boring-semantic-layer> |
+| Boring Semantic Layer package | <https://pypi.org/project/boring-semantic-layer/> |
+| Example connectors (Google) | <https://github.com/googledatastudio/example-connectors> |
+| Matomo connector | <https://github.com/matomo-org/looker-studio-connector> |
+| Google connector samples | <https://github.com/googledatastudio/community-connectors> |
+| dbt Semantic Layer connector | <https://github.com/anouardbt/dbt-sl-looker-studio> |
+| Cube connector | <https://github.com/chaos87/datastudio_cube_connector> |
+| Looker connector limits | <https://docs.cloud.google.com/data-studio/limits-of-the-looker-connector> |
+| Connector changelog | <https://developers.google.com/looker-studio/connector/changelog> |
+| ASD-STE100 | <https://www.asd-ste100.org/> |

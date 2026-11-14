@@ -1,0 +1,15 @@
+{
+  "timeZone": "Europe/Berlin",
+  "dependencies": {},
+  "dataStudio": {
+    "name": "BSL Prototype",
+    "company": "prototype",
+    "logoUrl": "https://www.gstatic.com/images/branding/product/1x/data_studio_48dp.png",
+    "addonUrl": "https://example.com",
+    "supportUrl": "https://example.com",
+    "description": "PROTOTYPE: Boring Semantic Layer metrics with descriptions and locked formulas."
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": ["https://www.googleapis.com/auth/script.external_request"]
+}
