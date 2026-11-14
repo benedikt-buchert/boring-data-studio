@@ -629,6 +629,19 @@ These questions are about the internal behavior of Data Studio. No documentation
 | O-04 | Production cache design, for example Redis (D-19). | Later |
 | O-05 | Evaluate the PostgreSQL-protocol alternative (sections 14.1 and 14.3): expose BSL through the PostgreSQL wire protocol and use the native PostgreSQL connector. This avoids the Apps Script limits, but Data Studio then generates SQL that the API must translate. | Later |
 
+### 13.2 Open items from the prototype retrospective (2026-11-14)
+
+Decisions the team must take before connector development starts. Evidence: `prototype/README.md`, `docs/`.
+
+| ID | Item | Options | Owner |
+|---|---|---|---|
+| O-06 | Sandbox permissions for agent sessions: `kill` of a stale MCP Chrome, `ssh -R` tunnels and `npx cloudflared` were each denied once and cost a round-trip to the user. | Add an allowlist to `.claude/settings.json`, or accept the prompts. | Team |
+| O-07 | Global `RTK.md` steering points to `rtk`, which is not installed. The hook turned `cat` output of this document into fragments. | Install `rtk`, or remove the pointer. | Team |
+| O-08 | Public URL for the API during golden-fixture runs. localhost.run rotates its domain every few minutes and Data Studio caches each failure (LS-52). serveo.net is stable only while the ssh session lives. | Registered serveo key with a fixed subdomain, ngrok reserved domain, or a small cloud deployment (needs billing). | Team |
+| O-09 | This document exceeds the agent read limit (740 lines) and must be paged. | Move the evidence tables (sections 5 to 7) to `research/docs/evidence.md` with a pointer, or keep as is. | Team |
+| O-10 | The Serena MCP instruction is loaded every session and was not used in the prototype. | Disable it for this repository, or keep. | Team |
+| O-11 | No CI. `make check` (schema self-check + replay of all golden fixtures in-process) is the candidate gate. `prototype/verify_dashboard.py` stays manual because it needs a browser dump. | Add CI with `make check` when the repository is created. | Wayfinder |
+
 ### 13.1 Handover to Wayfinder
 
 Wayfinder specifies the detailed design of each part below. Each part lists its inputs in this document.
