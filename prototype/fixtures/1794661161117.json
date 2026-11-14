@@ -1,0 +1,17 @@
+{
+ "scriptParams": {
+  "lastRefresh": "1794617959431"
+ },
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ },
+ "fields": [
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "total_distance"
+  }
+ ]
+}

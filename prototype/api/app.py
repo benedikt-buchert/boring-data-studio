@@ -162,6 +162,14 @@ def translate_filters(groups):
 
 app = FastAPI()
 
+@app.middleware("http")
+async def api_key(request: Request, call_next):
+    # PATH_KEY test (O-02): when API_KEY exists, every call must send it as X-API-Key
+    keyfile = HERE / "API_KEY"
+    if keyfile.exists() and request.headers.get("x-api-key") != keyfile.read_text().strip():
+        return JSONResponse(status_code=401, content={"error": "invalid API key"})
+    return await call_next(request)
+
 @app.get("/schema")
 def schema(): return {"schema": SCHEMA}
 

@@ -405,6 +405,7 @@ The prototype in `prototype/` ran the flights model through a real community con
 | E-40 | Every getData sleeps 4 s; open page 2 (11 data components incl. controls) | 11 getData executions start within 1 second and each takes 4.7–5.7 s, so Data Studio calls the connector fully in parallel, one execution per component (plus one per summary row). Per-call Apps Script overhead is about 0.7–1.5 s. Each page load also runs `getAuthType` and several `isAdminUser`. | Executions 12:31:07–08 |
 | E-41 | Page 4 opened, then browser reload, then switch to edit mode | First open: 4 getData. Reload 40 s later and edit mode 75 s later: **no** getData, only `getAuthType`/`isAdminUser`. Data Studio serves repeated queries from its server cache across reloads and modes (LS-29). Failed results are cached too (LS-52). | Executions 12:33–12:35 |
 | E-42 | BSL one-to-many join (`carriers` → `flights`, `type: many`), 4 carriers incl. one without flights | At the one-side grain BSL is exact: fleet_size per carrier, flight_count, avg_distance per carrier equal pandas truth; grand total fleet 3000 (no fan-out); carriers without flights appear with 0/NULL (left join). Grouped by a many-side dimension (`origin`), fleet_size is the fleet of the distinct carriers per origin (2700) plus a NULL-origin row (300). Summed by Data Studio: 11,100 across origins and 240,600 across days, versus the true 3,000. | `prototype/api` probe, 2026-11-14 |
+| E-43 | Second connector `BSL Prototype PathKey` with `AuthType.PATH_KEY`; `setCredentials` validates path + key against `GET /schema` with header `X-API-Key`, stores both in `UserProperties`; API rejects calls without the key (401) | Data Studio renders its own Path / Key form. Wrong key: "Sorry, we submitted your credentials, but the credentials are invalid." Right key: config step, `getSchema` 25/25 fields, `getData` works; requests carry **no** `configParams`, so the API URL is not part of the data source or report config. After the tunnel expired, `isAuthValid` (which also called the API) returned false, and the report showed "Authorisation Required" and asked for path and key again. A new report on the data source needed one extra "Authorise connector" step. | `prototype/connector/Code_pathkey.gs`, data source 44a2c96d…, 2026-11-14 |
 | E-29 | Default date range | `dateRange` is the last 28 days without today when the chart uses "Auto". | `1794637700526.json` |
 
 **Corrections to earlier sections.** Section 7.7 said that summary rows are not safe for `compute: bsl` (E-19). This was wrong: the summary row is a separate query (LS-50), so it is safe (E-26). E-19 applies to date-grain changes (E-28) and to mixed requests (E-25).
@@ -575,6 +576,8 @@ Status of each item: **Derived** (a calculation from the proven values in sectio
 | R-12 | Declare generated helper measures in the BSL model config before building the model. Do not add them with `with_measures` at request time. | E-38. |
 | R-13 | The classifier must include the join path: a measure of the "one" side of a `type: many` join is decomposable only over dimensions of its own side. Over many-side dimensions expose it as fixed grain (`compute: bsl`) or exclude it. | E-42. |
 | R-14 | Budget the API for N parallel requests per page view (N = data components + summary rows) and per-call Apps Script overhead of about 1 s. Keep the global row cap (R-02) below 1,000,000; Data Studio rejects more with an unhelpful system error, so the API must return its own error first (R-01). | E-39, E-40. |
+| R-15 | `isAuthValid` checks only that path and key are stored; it does not call the API. Validate the key once in `setCredentials`. Report API outages from `getData` with `newUserError`. Otherwise every outage looks like a credentials problem to every viewer, and every page load spends extra URL Fetch calls (`isAuthValid` runs on each load, E-40). | E-43. |
+| R-16 | Credentials live in the effective user's `UserProperties`. With owner's credentials only the data source owner enters the key; with viewer's credentials every viewer needs a key. Decide key distribution together with LS-32 / R-05. | E-43. |
 
 ## 11. Release readiness
 
@@ -621,6 +624,7 @@ flowchart LR
 | U-15 | No. `COUNT_DISTINCT` does not count NULL. Same as BSL. | E-24 |
 | U-17 | 12 hours. | LS-51 |
 | U-19 | NULL. | E-24 |
+| O-02 | PATH_KEY works end to end: one connector deployment can serve any API URL plus key, entered by the user. | E-43 |
 | U-04 | No split at 21 or 22 fields; one request. | E-34 |
 | U-07 | No LS-24 error. When the API does not apply a filter, a `compute: bsl` metric silently shows wrong, duplicated rows. When the API applies it, the values are correct. Rule: the API must apply every filter on requests that contain a `compute: bsl` metric, or reject the request. | E-36, E-35 |
 | U-16 | Yes: about 300 seconds, before the 6-minute Apps Script limit. | E-37 |
@@ -642,7 +646,7 @@ These questions are about the internal behavior of Data Studio. No documentation
 | ID | Item | Owner |
 |---|---|---|
 | O-01 | Extend the BSL FastAPI app, or build a separate app that only uses BSL as a library (section 4.3). | Team |
-| O-02 | Use `PATH_KEY` from version 1 (section 11.2). | Team |
+| O-02 | Use `PATH_KEY` from version 1 (section 11.2). | Team — **verified feasible (E-43)**; decision left: key distribution (R-16) |
 | O-03 | Detailed design of all parts (section 13.1). | Wayfinder |
 | O-04 | Production cache design, for example Redis (D-19). | Later |
 | O-05 | Evaluate the PostgreSQL-protocol alternative (sections 14.1 and 14.3): expose BSL through the PostgreSQL wire protocol and use the native PostgreSQL connector. This avoids the Apps Script limits, but Data Studio then generates SQL that the API must translate. | Later |

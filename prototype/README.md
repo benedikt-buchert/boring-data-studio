@@ -121,3 +121,14 @@ Totals: 344 dashboard numbers checked across 5 dumps, all equal to independent t
 | One-to-many joins | BSL exact at the one-side grain; one-side measures over many-side dims are not re-aggregatable (3,000 true vs 11,100 summed) | Classifier must consider join cardinality (R-13) |
 
 Not done: PATH_KEY auth flow (O-02) and the native PostgreSQL connector SQL capture (U-20/O-05). Both need things outside this sandbox: PATH_KEY needs a user re-authorising the connector in the browser; U-20 needs a Postgres reachable from Google's IPs (public TCP tunnel or a cloud instance with billing).
+
+## PATH_KEY auth (O-02) — verified 2026-11-14
+
+`connector/Code_pathkey.gs` (Apps Script project 1PRYEyTmHwf65twesI3pPKMsZ1TIu4MfgHR6sZ8BuQfCkp8XRN-sYaUer, head deployment AKfycbwhdBUAjfLXoqxhI_he_w7J3DT-KJCeTzn5Tgun0X64) asks the user for the API URL (path) and an API key. The API enforces the key when `prototype/api/API_KEY` exists (git-ignored; delete it to let the original no-auth connector work again).
+
+| Step | Result |
+|---|---|
+| Wrong key | "Sorry, we submitted your credentials, but the credentials are invalid." |
+| Right key | config step → 25/25 fields → scorecard `distance_per_flight` 1,200.41 (correct) |
+| getData request | no `configParams`; URL and key come from the user's stored credentials |
+| API outage | `isAuthValid` pinged the API, so an expired tunnel became a credentials prompt → R-15 |

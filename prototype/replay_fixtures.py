@@ -7,7 +7,8 @@ import app
 sys.path.insert(0, str(Path(__file__).parent))
 from truth import truth
 
-client = TestClient(app.app, headers={"x-replay": "1"})
+keyfile = Path(__file__).parent / "api" / "API_KEY"
+client = TestClient(app.app, headers={"x-replay": "1", **({"x-api-key": keyfile.read_text().strip()} if keyfile.exists() else {})})
 known = {f["id"] for f in app.SCHEMA}
 bad = 0
 seen = set()
