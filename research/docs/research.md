@@ -56,7 +56,7 @@ These decisions set the direction for the detailed design. They are inputs for W
 | D-10 | The connector derives the treatment of each measure from the BSL expression (section 6). |
 | D-11 | Per-field overrides live in BSL `metadata` under the key `looker_studio`. |
 | D-12 | The Docker image contains the models. The build records the git SHA and tag in the image. |
-| D-13 | Version 1 uses key authentication. The authentication layer is pluggable. Row-level security is not in scope for version 1. |
+| D-13 | Version 1 uses key authentication. The authentication layer is pluggable. Row-level security is not in scope for version 1. The options and the recommendation are in section 11.3. |
 | D-14 | One Data Studio data source maps to one BSL model, including its joins. |
 | D-15 | Each model exposes one primary time dimension at day grain. The connector sets `dateRangeRequired` to true. |
 | D-16 | The simulator covers the table body, the summary row, the scorecard, dimension filters, the date range and date-grain bucketing. Blends, comparison periods and report-level calculated fields are not in scope. |
@@ -200,6 +200,11 @@ Primary sources:
 | LS-50 | A table with a summary row sends two getData requests: one with the dimensions and one without dimensions. Data Studio calculates the summary row from the second response. It does not sum the rows of the first response. | Prototype fixtures (E-23) | Code |
 | LS-51 | A direct link with `connectorConfig` fills the connector configuration. The "Data freshness" option offered for this connector is 12 hours. "Field editing in reports" is on by default. | Prototype data source page | Code |
 | LS-52 | Data Studio also caches a failed getData result. The same query shows the cached error until the query or the data source configuration changes. | Prototype, error ID 8dbb1c0c after a tunnel drop | Code |
+| LS-53 | The connector auth types are `NONE`, `OAUTH2`, `KEY`, `USER_PASS`, `USER_TOKEN`, `PATH_USER_PASS` and `PATH_KEY`. `OAUTH2` uses the `apps-script-oauth2` library and needs `get3PAuthorizationUrls`, `authCallback`, `isAuthValid` and `resetAuth`. | [Connector auth](https://developers.google.com/looker-studio/connector/auth); [AuthType](https://developers.google.com/looker-studio/connector/reference#authtype) | Doc |
+| LS-54 | `ScriptApp.getIdentityToken()` returns an OpenID Connect ID token (a JWT signed by Google) for the effective user when the script has the `openid` scope; the email claim needs the `userinfo.email` scope. The token's audience is the OAuth client ID of the script's Google Cloud project. A receiver verifies it against Google's public certificates. | [ScriptApp.getIdentityToken](https://developers.google.com/apps-script/reference/script/script-app#getIdentityToken()); [Verify Google ID tokens](https://developers.google.com/identity/sign-in/web/backend-auth) | Doc |
+| LS-55 | `ScriptApp.getOAuthToken()` returns the effective user's OAuth access token for the script's scopes. A receiver can check it with Google's token-info endpoint. | [ScriptApp.getOAuthToken](https://developers.google.com/apps-script/reference/script/script-app#getOAuthToken()) | Doc |
+| LS-56 | Cloud Run can require IAM authentication (`roles/run.invoker`) and accepts ID tokens whose audience is the service URL or a configured custom audience. | [Cloud Run authentication](https://cloud.google.com/run/docs/authenticating/overview); [Custom audiences](https://cloud.google.com/run/docs/configuring/custom-audiences) | Doc |
+| LS-57 | Apps Script `UserProperties` are visible only to the user who stored them; `ScriptProperties` are shared by all users and editors of the script. | [Properties service](https://developers.google.com/apps-script/guides/properties) | Doc |
 
 ## 6. Evidence: Boring Semantic Layer
 
@@ -598,6 +603,39 @@ flowchart LR
 6. **Quotas.** Each user has a daily URL Fetch quota (LS-25). Section 10 gives the effect on usage. The API cache (D-19) reduces warehouse queries, but not URL Fetch calls.
 7. **Request size.** A URL can have at most 2 KB (LS-25). Send requests as POST bodies.
 
+### 11.3 Authentication options
+
+D-13 asks for a pluggable authentication layer. The prototype verified `PATH_KEY` (E-43) and uses it. This section compares it with the other options. Status values as in section 5.
+
+**Constraint for every option: the effective user.** The connector runs as the data source owner (owner's credentials) or as each report viewer (viewer's credentials, `forceViewersCredentials`, LS-32). An option that identifies a user identifies only the owner unless viewer's credentials are forced. Viewer's credentials also give each viewer their own Apps Script quota and concurrency (R-05, R-14), but each viewer must authorise the connector once.
+
+**Constraint for every option: distribution.** A Partner Connector needs OAuth client verification for every auth type (LS-27).
+
+| ID | Option | Mechanism | Identity at the API | Secret to manage | Strengths | Weaknesses | Status |
+|---|---|---|---|---|---|---|---|
+| A-1 | `NONE` + URL in config | API URL in each data source config | None | None | Simplest | API open to anyone who knows the URL; URL in every request and data source | Code (prototype until E-43) |
+| A-2 | `PATH_KEY` | User enters API URL and key; stored in `UserProperties` (LS-57); sent as a header | None (shared key) | Static key per API, manual rotation, distribution to every key holder (R-16) | Works with any hosting; one connector serves any API (O-02); URL change is one re-entry per user | No user identity, so no row-level security or per-user audit | **Code, adopted** (E-43) |
+| A-3 | Google identity token (OIDC) | Connector sends `ScriptApp.getIdentityToken()` as `Authorization: Bearer`; API verifies signature, audience and email domain or group (LS-54) | Verified Google email of the effective user | None (Google signs; tokens expire after about one hour) | No secret to distribute or rotate; access removed through Google accounts and groups; enables row-level security later and an audit trail; fits Workspace-first distribution (D-04) | Needs the `openid` and `userinfo.email` scopes; API must know the script's OAuth client ID (audience); real per-viewer identity needs `forceViewersCredentials`; API must reach Google's certificate endpoint (cacheable) | Doc, not tested (T-1) |
+| A-4 | Google OAuth access token | Connector sends `ScriptApp.getOAuthToken()`; API checks it with Google token info (LS-55) | Google email of the effective user | None | Same identity benefits as A-3 | Token-info call per request (needs caching); access tokens are not meant as API credentials for third parties; A-3 is the cleaner form | Doc, not recommended |
+| A-5 | `OAUTH2` with a third-party identity provider | User signs in to the organisation's IdP (Okta, Entra, Google) via `apps-script-oauth2`; connector sends the access token (LS-53) | IdP identity with scopes | OAuth client secret in the script; refresh-token handling | Standard, revocable, scoped, per-user tokens; works with any IdP | Most build effort (client registration, callback, refresh); client secret in `ScriptProperties` is visible to script editors (LS-57) | Doc, not tested |
+| A-6 | Service-account key in the connector | Connector holds a service-account key and mints tokens, for example for an IAM-protected Cloud Run service (LS-56) | The service account, not the user | Long-lived private key in `ScriptProperties`, readable by every script editor (LS-57) | Keeps the API private behind Cloud Run IAM | Shared long-lived secret with high privilege; no user identity; key rotation is manual | Doc, **not recommended** |
+| A-7 | Cloud Run IAM with A-3 tokens | Cloud Run custom audience set to the script's OAuth client ID; viewers' Google group gets `roles/run.invoker` (LS-56) | Google email, checked by Cloud Run before the API runs | None | API needs no token code; unauthenticated traffic never reaches the container | Only for APIs on Cloud Run; whether Apps Script identity tokens pass Cloud Run's audience check is unverified | Doc, not tested (T-2) |
+
+**Recommendation.**
+
+1. Use A-3 as the primary method for Google Workspace deployments, together with viewer's credentials when per-user identity or row-level security is needed. Pass the verified email to the BSL `auth_hook` (BSL-06).
+2. Keep A-2 as the fallback for open-source users whose API is not on Google or who do not use Google identity. The authentication layer stays pluggable (D-13).
+3. Use A-5 only when the organisation requires its own identity provider.
+4. Do not put service-account keys in the connector (A-6). Use service accounts on the API side, for example workload identity from the API to the warehouse.
+
+**Required tests.**
+
+| ID | Test | Decides |
+|---|---|---|
+| T-1 | Connector sends `getIdentityToken()`; API verifies it with `google-auth` (`id_token.verify_oauth2_token`), checks audience and domain; test with owner's and with viewer's credentials. | Whether A-3 works in Data Studio and which email the API sees in each credentials mode |
+| T-2 | Deploy the API to Cloud Run with IAM required and the script's OAuth client ID as custom audience. | Whether A-7 removes token code from the API |
+| T-3 | Measure the extra latency of token creation in Apps Script and of verification in the API (certificate cache warm and cold). | Cost of A-3 per getData (compare E-40 overhead) |
+
 ## 12. Unverified claims: required tests
 
 ### 12.1 Resolved by research or spike
@@ -663,6 +701,7 @@ Decisions the team must take before connector development starts. Evidence: `pro
 | O-09 | This document exceeds the agent read limit (740 lines) and must be paged. | Move the evidence tables (sections 5 to 7) to `research/docs/evidence.md` with a pointer, or keep as is. | Team |
 | O-10 | The Serena MCP instruction is loaded every session and was not used in the prototype. | **Done 2026-11-14:** disabled for this repository (`disabledMcpServers: ["serena"]` in the project entry of `~/.claude.json`; re-enable with `/mcp`). | Team |
 | O-11 | No CI. `make check` (schema self-check + replay of all golden fixtures in-process) is the candidate gate. `prototype/verify_dashboard.py` stays manual because it needs a browser dump. | Add CI with `make check` when the repository is created. | Wayfinder |
+| O-12 | Choose the authentication method for version 1: A-2 (`PATH_KEY`, verified) or A-3 (Google identity token, recommended for Workspace, needs T-1). Choose owner's or viewer's credentials together with it. | Options and tests: section 11.3. | Team |
 
 ### 13.1 Handover to Wayfinder
 
@@ -676,7 +715,7 @@ Wayfinder specifies the detailed design of each part below. Each part lists its 
 | Request translation (fields, filters, date range, row modes) | Section 8, D-24, BSL-07 to BSL-09, E-16, E-17 |
 | Limits and guards | Section 10, D-21, R-01 to R-10 |
 | Simulator and test system | Section 9, D-16, E-21, U-01 to U-20 |
-| Connector (TypeScript, auth, deployment) | D-13, D-18, D-26, LS-20, LS-32, section 14 |
+| Connector (TypeScript, auth, deployment) | D-13, D-18, D-26, LS-20, LS-32, LS-53 to LS-57, section 11.3, section 14 |
 | Versioning and environments | D-06, D-12 |
 | Caching | D-19, O-04, LS-29 |
 | Release and publishing | Section 11, LS-27 |
