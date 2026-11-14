@@ -46,6 +46,15 @@ function getSchema(request) {
 }
 
 function getData(request) {
+  // PROTOTYPE U-16: how long does Data Studio wait for getData? Only for a chart that requests exactly max_delay.
+  var U16_DELAY_MS = 0;  // set to e.g. 330000 to re-run the U-16 timeout test
+  if (U16_DELAY_MS && request.fields.length === 1 && request.fields[0].name === 'max_delay') {
+    var t0 = Date.now();
+    while (Date.now() - t0 < U16_DELAY_MS) Utilities.sleep(Math.min(60000, U16_DELAY_MS - (Date.now() - t0)));
+    var f = cc.getFields();
+    f.newMetric().setId('max_delay').setName('max_delay').setType(cc.FieldType.NUMBER).setAggregation(cc.AggregationType.MAX);
+    return {schema: f.build(), rows: [{values: [119]}], filtersApplied: false};
+  }
   var apiUrl = request.configParams.apiUrl;
   var res = fetchJson(apiUrl + '/data', request); // /data returns the schema for the requested ids
   return {schema: buildFields(res.schema).build(), rows: res.rows, filtersApplied: res.filtersApplied};

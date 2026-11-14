@@ -19,6 +19,7 @@ Snapshots of the report editor cost ~10k tokens each. Drive with `evaluate_scrip
 - Properties panel remembers the last tab: click `[role=tab]` "Setup" after selecting a component, or no chips exist.
 - Chips: `.common-chip` with `.display-name` (filter out `.closest('.cdk-overlay-container')` to get panel chips). Click the display name → picker opens in `.cdk-overlay-container`; pick the last `.common-chip` whose display name matches. "Add metric" is found by `textContent`. Chip edit icon: hover (`mouseenter`) then `.edit-icon`; the data-type button's text is `Date arrow_drop_down`; menus are `[role=menuitem]` ("Date and Time" → "Year Month").
 - Switches: `[role=switch][aria-label="Show summary row"]`, check `aria-checked`.
+- Field picker lists are virtualized: type the field name into the focused search input (`execCommand('insertText', ...)`) before picking.
 - Controls (`Add a control` → menuitem `Date range control` / `Drop-down list`) place like charts; their field is the first panel chip. Controls only open in **View** mode; in edit mode a click selects them.
 - Refresh all charts: `Control+Shift+E` via `press_key`; a page reload also works. Error details: click the leaf element with text `See details`, read `[role=dialog]`, close with its `OK`.
 - Keyboard nudge of a selected component: `Shift+ArrowUp` (real key press; synthetic drags do not move components).
@@ -28,3 +29,7 @@ Snapshots of the report editor cost ~10k tokens each. Drive with `evaluate_scrip
 
 ## Reading results
 Dump `{page, components: [...].map(e => e.innerText)}` once and verify offline with `prototype/verify_dashboard.py`; do not read values from screenshots.
+
+## Timing tests
+- Data Studio waits about 300 s for getData (E-37). To re-test, set `U16_DELAY_MS` in Code.gs; read durations on the Apps Script Executions page (`/executions`), which records start time, duration and status per call.
+- Free serveo sessions expire after about 10 minutes; anything longer needs a stable tunnel (O-08) or must avoid the tunnel (as the U-16 test does).

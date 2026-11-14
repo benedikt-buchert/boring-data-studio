@@ -97,3 +97,16 @@ Model additions (`api/flights.yml`): `airports` model + `joins: airports` (left,
 Run: `api/.venv/bin/python verify_dashboard.py verification/page3_semantic_layer.json`.
 
 Stable tunnel used for the final run: serveo.net via `ssh -R 80:localhost:8799 serveo.net` (random subdomain, stable for the ssh session, no interstitial for non-browser clients).
+
+## Second round of live checks (2026-11-14)
+
+| Check | Result |
+|---|---|
+| Dimension filter from a drop-down (View mode) | Works end to end after adding IS_NULL / EXCLUDE and the LS-16 `forFilterOnly` handling. 34/34 filtered values match independent truth. |
+| U-07 fixed-grain metric + filter | Filter applied by API: correct. Filter left to Data Studio: silent wrong rows. → R-11. |
+| U-04 > 20 fields | 21 and 22 fields arrive in one request (LS-13 contradicted). 195/195 values correct. |
+| U-16 timeout | Data Studio gives up after ~300 s with "System error"; Apps Script runs on to 330 s. → R-04 updated. |
+| Bug found | `with_measures` helpers on a joined model broadcast grand totals for non-join-key dims (avg_distance under a carrier filter was unfiltered). Fixed by declaring helpers in the config; regression in `make check`. |
+| Verifier | `verify_dashboard.py` now compares against `truth.py` (pandas on raw rows). The earlier version took truth from the API itself and could not catch API bugs. |
+
+Totals: 344 dashboard numbers checked across 5 dumps, all equal to independent truth.

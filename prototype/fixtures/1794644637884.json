@@ -1,0 +1,77 @@
+{
+ "configParams": {
+  "apiUrl": "https://215ff07ef4a86a50-195-52-178-55.serveousercontent.com"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794644169753"
+ },
+ "fields": [
+  {
+   "name": "airports__city"
+  },
+  {
+   "name": "airports__code"
+  },
+  {
+   "name": "airports__country"
+  },
+  {
+   "name": "avg_delay__count"
+  },
+  {
+   "name": "avg_delay__sum"
+  },
+  {
+   "name": "avg_distance__count"
+  },
+  {
+   "name": "avg_distance__sum"
+  },
+  {
+   "name": "carrier"
+  },
+  {
+   "name": "carrier__value"
+  },
+  {
+   "name": "delayed_flights"
+  },
+  {
+   "name": "early_flights"
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "long_haul_flights"
+  },
+  {
+   "name": "max_delay"
+  },
+  {
+   "name": "max_distance"
+  },
+  {
+   "name": "min_delay"
+  },
+  {
+   "name": "min_distance"
+  },
+  {
+   "name": "origin"
+  },
+  {
+   "name": "short_haul_flights"
+  },
+  {
+   "name": "total_delay"
+  },
+  {
+   "name": "total_distance"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ }
+}

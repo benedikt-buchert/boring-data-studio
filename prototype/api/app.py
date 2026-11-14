@@ -12,7 +12,7 @@ import ibis
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from ibis.expr import operations as ops
 
 HERE = Path(__file__).parent
@@ -168,11 +168,11 @@ def schema(): return {"schema": SCHEMA}
 @app.post("/data")
 async def data(req: Request):
     body = await req.json()
-    FIX.mkdir(exist_ok=True)
-    (FIX / f"{int(time.time()*1000)}.json").write_text(json.dumps(body, indent=1))
+    if "x-replay" not in req.headers:  # replays and tests must not feed back into the golden fixtures
+        FIX.mkdir(exist_ok=True)
+        (FIX / f"{int(time.time()*1000)}.json").write_text(json.dumps(body, indent=1))
     # shortcut: test switches as flag files (U-07, U-16); delete the files to turn them off
-    if any(f["name"] == "max_delay" for f in body["fields"]) and (HERE / "DELAY_SECONDS").exists():
-        await asyncio.sleep(float((HERE / "DELAY_SECONDS").read_text()))
+    delay = float((HERE / "DELAY_SECONDS").read_text()) if any(f["name"] == "max_delay" for f in body["fields"]) and (HERE / "DELAY_SECONDS").exists() else 0
     filters = None if (HERE / "FORCE_NO_PUSHDOWN").exists() else translate_filters(body.get("dimensionsFilters"))
     applied = filters is not None
     # LS-16: filters applied -> drop forFilterOnly fields; not applied -> return them so Data Studio filters
@@ -203,7 +203,16 @@ async def data(req: Request):
             elif BY_ID[i]["type"] == "METRIC": vals.append(float(v))
             else: vals.append(str(v))
         rows.append({"values": vals})
-    return {"schema": [BY_ID[i] for i in ids], "rows": rows, "filtersApplied": applied}
+    out = {"schema": [BY_ID[i] for i in ids], "rows": rows, "filtersApplied": applied}
+    if delay:  # U-16: stream whitespace (valid JSON prefix) so proxies keep the connection open during the delay
+        async def slow():
+            t0 = time.time()
+            while time.time() - t0 < delay:
+                yield b" "; await asyncio.sleep(5)
+            (HERE.parent / "fixtures" / "u16_completed.log").open("a").write(f"{time.strftime('%H:%M:%S')} sent after {time.time() - t0:.0f}s\n")
+            yield json.dumps(out).encode()
+        return StreamingResponse(slow(), media_type="application/json")
+    return out
 
 if __name__ == "__main__":  # self-check
     print(json.dumps(SCHEMA, indent=1))

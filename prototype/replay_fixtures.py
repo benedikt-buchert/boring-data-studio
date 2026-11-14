@@ -7,11 +7,16 @@ import app
 sys.path.insert(0, str(Path(__file__).parent))
 from truth import truth
 
-client = TestClient(app.app)
+client = TestClient(app.app, headers={"x-replay": "1"})
 known = {f["id"] for f in app.SCHEMA}
 bad = 0
+seen = set()
 for f in sorted((Path(__file__).parent / "fixtures").glob("*.json")):
     body = json.load(open(f))
+    shape = json.dumps({k: body.get(k) for k in ("fields", "dimensionsFilters")}, sort_keys=True)  # date range irrelevant to shape
+    if shape in seen:
+        continue  # identical request shape already replayed
+    seen.add(shape)
     ids = {x["name"] for x in body["fields"]}
     if not ids <= known:
         continue  # fixture from an older schema

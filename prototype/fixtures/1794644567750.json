@@ -1,0 +1,29 @@
+{
+ "fields": [
+  {
+   "name": "airports__city"
+  },
+  {
+   "name": "airports__country"
+  },
+  {
+   "name": "carrier"
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "origin"
+  }
+ ],
+ "configParams": {
+  "apiUrl": "https://215ff07ef4a86a50-195-52-178-55.serveousercontent.com"
+ },
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794644169753"
+ }
+}

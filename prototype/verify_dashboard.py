@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "api"))
 import app  # only for the raw seed rows (app.df)
-from truth import truth
+from truth import truth, DIMS
 
 FILTERS = {None: None, "carrier_not_AA": lambda d: (d.carrier != "AA") | d.carrier.isna()}
 doc = json.load(open(sys.argv[1]))
@@ -33,7 +33,8 @@ def table(text):
         if re.fullmatch(r"\d+\.", lines[i]):
             rows.append(lines[i + 1:i + 1 + len(hdr)]); i += 1 + len(hdr)
         elif lines[i] == "Grand total":
-            rows.append(["Grand total"] + lines[i + 1:i + len(hdr)]); i += len(hdr)
+            tail = [l for l in lines[i + 1:] if not re.fullmatch(r"\d+ - \d+ / \d+.*", l)]
+            rows.append(["Grand total"] + tail); break
         else:
             i += 1
     return hdr, rows
@@ -47,12 +48,16 @@ for c in doc["components"]:
             checks.append((f"scorecard {m.group(1)}", num(m.group(2)), t[m.group(1)]))
     elif re.search(r"\n1\.\n", c):
         hdr, rows = table(c)
-        t = truth(app.df, hdr[0], doc["dateRange"], keep)
+        nd = next(k for k, h in enumerate(hdr) if h not in DIMS)  # leading headers that are dimensions
+        t = truth(app.df, hdr[:nd], doc["dateRange"], keep)
         for r in rows:
-            for h, v in zip(hdr[1:], r[1:]):
-                if r[0] not in t:
-                    checks.append((f"{hdr[0]}={r[0]} {h}", num(v), "missing")); continue
-                checks.append((f"{hdr[0]}={r[0]} {h}", num(v), t[r[0]][h]))
+            key = "Grand total" if r[0] == "Grand total" else " | ".join(r[:nd])
+            vals = r[1:] if r[0] == "Grand total" else r[nd:]
+            vals = vals[len(vals) - (len(hdr) - nd):]  # summary row has one label cell for all dimension columns
+            for h, v in zip(hdr[nd:], vals):
+                if key not in t:
+                    checks.append((f"{'/'.join(hdr[:nd])}={key} {h}", num(v), "missing")); continue
+                checks.append((f"{'/'.join(hdr[:nd])}={key} {h}", num(v), t[key][h]))
 
 bad = 0
 for name, ds, tv in checks:

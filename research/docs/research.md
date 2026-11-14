@@ -160,7 +160,7 @@ Primary sources:
 | LS-10 | When one field has `semantics.semanticType`, Data Studio disables automatic semantic detection. | API reference, `semantics` | Doc |
 | LS-11 | The getData request contains `fields`, `dimensionsFilters`, `dateRange` and `scriptParams`. It contains no information about the expected aggregation. The connector must return rows at the grain of the requested dimensions. | API reference, getData; [Databricks forum](https://community.databricks.com/t5/warehousing-analytics/databricks-connector-for-looker-studio-no-aggregation-pushdown/m-p/115364) (Secondary) | Doc |
 | LS-12 | getData returns at most 1 million rows. | API reference, getData | Doc |
-| LS-13 | When a request has more than 20 fields, Data Studio sends more than one getData request. It groups the fields 20 at a time. | API reference, getData | Doc |
+| LS-13 | When a request has more than 20 fields, Data Studio sends more than one getData request. It groups the fields 20 at a time. | API reference, getData **Contradicted for 21 and 22 fields (E-34): Data Studio sent one request.** The split threshold, if any, is higher. | API reference, getData; E-34 | Doc, contradicted by Code |
 | LS-14 | In `dimensionsFilters`, the connector must OR the clauses in each inner array and AND the outer arrays. Each clause has `fieldName`, `values`, `type` (INCLUDE or EXCLUDE) and `operator`. | API reference; Filters | Doc |
 | LS-15 | The filter operators are EQUALS, CONTAINS, REGEXP_PARTIAL_MATCH, REGEXP_EXACT_MATCH, IN_LIST, IS_NULL, BETWEEN and four NUMERIC comparison operators. | API reference, Filter Operator | Doc |
 | LS-16 | The connector must apply all filters or no filters. When it applies them, it removes the `forFilterOnly` fields and sets `filtersApplied` to true. When it does not apply them, it returns the `forFilterOnly` fields and sets `filtersApplied` to false. Data Studio then applies the filters. | Filters | Doc |
@@ -396,6 +396,11 @@ The prototype in `prototype/` ran the flights model through a real community con
 | E-31 | Conditional measure `delayed_flights = (_.delay > 30).sum()` and calculated `on_time_rate = 1 - delayed_flights / flight_count` | Classified as SUM metric and formula `(1 - (SUM($delayed_flights) / SUM($flight_count)))`. Per city, per carrier and in the summary row equal to BSL (0.2456 total). | same |
 | E-32 | `compute: bsl` on a calculated measure with `.all()` (`pct_of_total`) and on `median_delay` | Fields without aggregation and `isReaggregatable` false. Per-row values and summary row (100 %, 61.5) equal BSL. A PERCENT semantic type multiplies by 100, so the BSL expression must return a fraction. | same |
 | E-33 | Dashboard verification | 81 of 81 numbers read from two report pages equal BSL truth for the same date range (`prototype/verify_dashboard.py`). | `prototype/verification/` |
+| E-34 | Table with 5 dimensions and 15 metrics (21 requested fields incl. helpers and the raw distinct-count dimension), then 22 with `dep_date` | One getData request each, no split. Summary row: second request with the 16 metric fields. All 195 visible numbers equal independent truth. | `prototype/verification/page4_21_fields.json` |
+| E-35 | Drop-down control on `carrier` in View mode, AA deselected | Data Studio sends `[[{IN_LIST EXCLUDE [AA]}, {IS_NULL INCLUDE}]]` (it adds `OR IS NULL` because `NOT IN` drops NULLs) and marks `carrier` `forFilterOnly`. The drop-down's own value list is a getData request too. With the filter applied by the API, 34 of 34 numbers equal independent truth. | `prototype/verification/page2_filtered_carrier_not_AA.json` |
+| E-36 | Same filter, API returns `filtersApplied` false (unsupported IS_NULL before the fix) | Data Studio filters the returned rows itself. Additive and formula metrics stay correct. The `compute: bsl` table breaks: 8 rows for 4 origins with values 1 and 0, no error or warning (answers U-07). | live, before the IS_NULL fix |
+| E-37 | Connector sleeps in `getData` (330 s) for one scorecard | Data Studio shows "System error" between 296 and 300 s after the request (second run; first run bracketed 218–316 s). The Apps Script execution completes after 330.8 s, so the quota is spent. The error text does not come from `newUserError`. | Apps Script Executions, 12:05:32 run |
+| E-38 | Helper measures added with `with_measures` on a model with `joins` | BSL returns the grand total in every row when grouping by a non-join-key dimension (`carrier`); grouping by the join key works. Declared measures are not affected. The prototype showed unfiltered `avg_distance` under a carrier filter until the helpers were declared in the model config. | `prototype/replay_fixtures.py` regression case |
 | E-29 | Default date range | `dateRange` is the last 28 days without today when the chart uses "Auto". | `1794637700526.json` |
 
 **Corrections to earlier sections.** Section 7.7 said that summary rows are not safe for `compute: bsl` (E-19). This was wrong: the summary row is a separate query (LS-50), so it is safe (E-26). E-19 applies to date-grain changes (E-28) and to mixed requests (E-25).
@@ -519,8 +524,9 @@ This section contains only proven limits. Section 10.2 calculates their effect f
 | Limit | Value | Claim |
 |---|---|---|
 | Rows in one getData response | 1,000,000 | LS-12 |
-| Fields in one getData request | 20. More fields cause more than one request. | LS-13 |
+| Fields in one getData request | At least 22 in one request (E-34). LS-13 says 20; not observed. | LS-13, E-34 |
 | Apps Script runtime | 6 minutes per execution | LS-25 |
+| Data Studio wait for getData | About 300 seconds, then "System error". Apps Script keeps running to its own limit (E-37). | E-37 |
 | URL Fetch response size | 50 MB per call | LS-25 |
 | URL Fetch POST body size | 50 MB per call | LS-25 |
 | URL length | 2 KB | LS-25 |
@@ -554,13 +560,15 @@ Status of each item: **Derived** (a calculation from the proven values in sectio
 | R-01 | Never truncate. Query with `LIMIT cap + 1`. When the result has `cap + 1` rows, return an error that names the measure and the cap. The connector shows it with `newUserError()` (LS-34). | A truncated response gives wrong numbers without an error. Items 1, 3, 4. |
 | R-02 | Set the global cap to 500,000 rows. A measure can set a lower cap with `max_rows`. | Item 1: the size limit applies near 595,000 rows for wide rows. |
 | R-03 | Send each request as a POST body. | URL length is 2 KB (LS-25). |
-| R-04 | Set the API timeout below 6 minutes, for example 300 seconds. Return a clear error on timeout. | Item 7. |
+| R-04 | Set the API timeout well below 300 seconds, for example 240 seconds, and return a clear error. Data Studio stops waiting after about 300 seconds with a generic "System error" (E-37); Apps Script time is spent anyway. | Item 7; E-37. |
 | R-05 | For shared reports with a small audience, use owner's credentials with a dedicated Workspace account as data source owner. For a large audience, use viewer's credentials. | Items 5, 6 and 8: owner's credentials give one shared cache, but also one quota and one concurrency limit. |
 | R-08 | Document the prerequisite: the Workspace organization must permit community connectors and Apps Script. | LS-33. |
 | R-06 | Recommend fewer than 30 data components on one report page. | Item 6. |
 | R-07 | For distinct counts of high-cardinality IDs, use `compute: bsl` on charts with a fixed grain (section 7.7). | Item 3; E-18. |
 | R-09 | Reject a request that contains a BSL-computed measure and raw fields of other measures. | E-20, E-25. |
 | R-10 | Generate a description warning for each BSL-computed measure: correct only at the shown grain, not in totals. | E-19, E-28. |
+| R-11 | When a request contains a `compute: bsl` metric and the API cannot apply all filters, return an error instead of `filtersApplied` false. | E-36. |
+| R-12 | Declare generated helper measures in the BSL model config before building the model. Do not add them with `with_measures` at request time. | E-38. |
 
 ## 11. Release readiness
 
@@ -607,6 +615,9 @@ flowchart LR
 | U-15 | No. `COUNT_DISTINCT` does not count NULL. Same as BSL. | E-24 |
 | U-17 | 12 hours. | LS-51 |
 | U-19 | NULL. | E-24 |
+| U-04 | No split at 21 or 22 fields; one request. | E-34 |
+| U-07 | No LS-24 error. When the API does not apply a filter, a `compute: bsl` metric silently shows wrong, duplicated rows. When the API applies it, the values are correct. Rule: the API must apply every filter on requests that contain a `compute: bsl` metric, or reject the request. | E-36, E-35 |
+| U-16 | Yes: about 300 seconds, before the 6-minute Apps Script limit. | E-37 |
 
 ### 12.3 Open: needs a real Data Studio report
 
@@ -614,9 +625,6 @@ These questions are about the internal behavior of Data Studio. No documentation
 
 | ID | Question | How to verify |
 |---|---|---|
-| U-04 | How does Data Studio join the responses of a request split at 20 fields (LS-13)? | Chart with more than 20 fields. Compare the result with BSL. |
-| U-07 | Do filters on charts with non-reaggregatable metrics cause LS-24 errors? | Manual test. |
-| U-16 | Does Data Studio stop waiting for getData before the 6-minute Apps Script limit? | API endpoint with a configurable delay. |
 | U-20 | Which SQL does the native PostgreSQL connector send for a table body, a summary row, a scorecard, a filter and a date-grain change? Does it send a separate query for the summary row? | Statement log of a plain PostgreSQL database (section 14.3). |
 
 ## 13. Open items

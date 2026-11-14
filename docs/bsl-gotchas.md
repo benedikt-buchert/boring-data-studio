@@ -8,3 +8,5 @@
 - A calculated measure is a function of a scope. Classify it by calling it with a recording scope (see `prototype/api/app.py`, `RecordingScope`); the same trick renders the Data Studio formula (`FormulaScope`). Give the scope every reversed operator (`__rsub__`, `__rtruediv__`): `1 - _.x / _.y` fails without them.
 - A `.all()` calculated measure cannot become a formula; expose it only with `compute: bsl` (fixed grain). Its value must be a fraction when the Data Studio semantic type is PERCENT (Data Studio multiplies by 100).
 - Requesting `x` and the hidden raw dimension `x__value` in one request maps to the same column: dedupe before `query()` or Ibis raises `Duplicate column name`.
+- `with_measures()` on a model that has `joins:` silently breaks GROUP BY for dimensions other than the join key: every row gets the grand total. Declare generated measures in the config dict before `from_config` (see `HELPERS` in `prototype/api/app.py`). `make check` has a regression case.
+- `(_.col > c).sum()` on a nullable column returns NULL (not 0) for an all-NULL group, because `NULL > c` is NULL in SQL.
