@@ -2,11 +2,11 @@
 
 | Item | Value |
 |---|---|
-| Status | Baseline for a new code repository. Research only. |
+| Status | Baseline for a new code repository. Research only. Updated 2026-11-14 with evidence from a real Data Studio report (section 7.8). |
 | Date | 2026-11-14 |
 | Writing standard | [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) rules. Technical names (getData, Ibis, Docker) are permitted. |
 | Versions tested | boring-semantic-layer 0.3.19, ibis-framework 11.0.0, duckdb 2.0.0, Python 3.12 |
-| Evidence code | [`spikes/spike_bsl_data_studio.py`](../spikes/spike_bsl_data_studio.py), [`spikes/spike_distinct_and_limits.py`](../spikes/spike_distinct_and_limits.py), [`spikes/spike_function_semantics.py`](../spikes/spike_function_semantics.py), [`spikes/spike_compute_location.py`](../spikes/spike_compute_location.py), [`spikes/spike_property_based.py`](../spikes/spike_property_based.py) and [`spikes/flights.yml`](../spikes/flights.yml) |
+| Evidence code | [`spikes/spike_bsl_data_studio.py`](../spikes/spike_bsl_data_studio.py), [`spikes/spike_distinct_and_limits.py`](../spikes/spike_distinct_and_limits.py), [`spikes/spike_function_semantics.py`](../spikes/spike_function_semantics.py), [`spikes/spike_compute_location.py`](../spikes/spike_compute_location.py), [`spikes/spike_property_based.py`](../spikes/spike_property_based.py), [`spikes/flights.yml`](../spikes/flights.yml) and the live prototype [`prototype/`](../../prototype/README.md) (API, connector, golden fixtures in `prototype/fixtures/`) |
 | Follow-up | Detailed design is out of scope for all parts. Wayfinder specifies it, with this document as input (section 13.1). |
 
 ## 1. Purpose and scope
@@ -196,6 +196,10 @@ Primary sources:
 | LS-46 | The native PostgreSQL connector uses the PostgreSQL JDBC driver and connects a data source to one table in the `public` schema, or to a custom query. Data Studio uses a custom query as the inner SELECT of each query it generates. Documented data types are numeric, character and boolean. Queries can time out after 3 to 5 minutes. A firewall must allow the Data Studio IP addresses. Private IP connections to Cloud SQL are not supported. | [Connect to PostgreSQL](https://docs.cloud.google.com/looker/docs/studio/connect-to-postgresql) | Doc |
 | LS-47 | Data Studio fills field descriptions automatically only for the Looker and Search Ads 360 connectors. | [Edit a data source](https://cloud.google.com/looker/docs/studio/edit-a-data-source-article) | Doc |
 | LS-48 | Cube's SQL API exposes each cube as a table and each measure as a column. It accepts `MEASURE()` for every measure type, and a standard aggregate only when it matches the measure type. Cube built a query rewrite system for this, because SQL has no native measure concept. | [Cube SQL API query format](https://cube.dev/docs/product/apis-integrations/sql-api/query-format); [Cube blog](https://cube.dev/blog/about-query-interfaces-for-olap-systems) | Doc (vendor) |
+| LS-49 | The `DataStudioApp` field builder rejects `setAggregation` on a field with `isReaggregatable` false. `getSchema` throws "Cannot set aggregation type for field ... since it is not reaggregatable". A `compute: bsl` field must have no aggregation. | Prototype, Data Studio error ID f6b07b34 | Code |
+| LS-50 | A table with a summary row sends two getData requests: one with the dimensions and one without dimensions. Data Studio calculates the summary row from the second response. It does not sum the rows of the first response. | Prototype fixtures (E-23) | Code |
+| LS-51 | A direct link with `connectorConfig` fills the connector configuration. The "Data freshness" option offered for this connector is 12 hours. "Field editing in reports" is on by default. | Prototype data source page | Code |
+| LS-52 | Data Studio also caches a failed getData result. The same query shows the cached error until the query or the data source configuration changes. | Prototype, error ID 8dbb1c0c after a tunnel drop | Code |
 
 ## 6. Evidence: Boring Semantic Layer
 
@@ -358,15 +362,15 @@ Each exposed measure has one compute location. The override key is `metadata.loo
 
 **Where `bsl` is safe.**
 
-1. A table or chart whose dimensions are exactly the requested grain, without a summary row.
-2. A scorecard without dimensions, if U-05 holds.
+1. A table or chart whose dimensions are exactly the requested grain, without raw fields of other measures (E-25).
+2. The summary row of such a table. Data Studio requests the summary row as a separate getData without dimensions (LS-50), so BSL calculates the true total (E-26).
+3. A scorecard without dimensions (E-27).
 
 **Where `bsl` is not safe or not known.**
 
-1. Summary rows. Data Studio cannot calculate the total from the group values (E-19). The display is not known (U-03).
-2. Date-grain changes. If Data Studio requests days and buckets them to months itself, the month values are wrong (E-19, U-06).
-3. Charts that also contain a `data_studio` metric with raw fields. The request then contains extra grouping fields (E-20).
-4. Chart filters on the metric (LS-24, U-07).
+1. Date-grain changes. Data Studio requests the day field and buckets the rows to months itself (E-28). The month values of a BSL-computed metric are then wrong (E-19).
+2. Charts that also contain a `data_studio` metric with raw fields. Data Studio cannot merge rows with different values of the fixed metric: dimension rows duplicate, every column of the summary row is wrong, and Data Studio shows the warning "Data aggregation issue: the data response has a bad reaggregation" (E-25). The API must reject this request (R-09).
+3. Chart filters on the metric (LS-24, U-07). Not tested.
 
 **Rules.**
 
@@ -374,6 +378,23 @@ Each exposed measure has one compute location. The override key is `metadata.loo
 2. The field description of a BSL-computed measure states that the value is correct only at the shown grain (R-10).
 3. The API never changes the compute location by itself, for example when a row guard fails. The guard returns an error (R-01). A silent change would give different numbers for the same metric.
 4. `compute: both` exposes one BSL measure as two fields (D-28). The exact `data_studio` field keeps the plain name, so the safe field is the default choice for report editors. The `bsl` field is the fast option for fixed-grain charts and for limits (E-18). Both fields come from one definition in git, so they cannot drift apart. `both` is valid only when the classifier can build the `data_studio` field. Otherwise schema generation fails with an error. Data Studio does not tell the connector the chart type, so the connector cannot select one of the two fields at run time. The report editor selects the field.
+
+### 7.8 Evidence from a real Data Studio report
+
+The prototype in `prototype/` ran the flights model through a real community connector and report on 2026-11-14. Every getData body is saved in `prototype/fixtures/`. Status of all rows: **Code**.
+
+| ID | Experiment | Result | Fixture |
+|---|---|---|---|
+| E-22 | Table origin × `distance_per_flight`, `avg_distance`, `unique_carriers` | getData asks only for base fields: `total_distance`, `flight_count`, `avg_distance__sum`, `avg_distance__count`, `carrier__value`. The formula fields never appear in a request. | `1794637792619.json` |
+| E-23 | Same table with summary row | Second getData without `origin`. Grand total `distance_per_flight` 1,200.41, `avg_distance` 1,614.84, `unique_carriers` 3. BSL totals: 1200.41, 1614.84, 3. The sum of the row values of `unique_carriers` would be 12. | `1794637792498.json` |
+| E-24 | Hidden raw dimension `carrier__value` | Data Studio requests it when a formula uses it. It is not in the field list (LS-08). NULL carrier counts as 0 in `COUNT_DISTINCT`, the same as BSL `nunique` (E-10). All-NULL `SUM` shows `null`; `null / n` shows `null`. | `1794637792619.json` |
+| E-25 | Table with `unique_carriers` (raw field) and `unique_carriers__bsl` (`isReaggregatable` false) | 8 rows for 4 origins, grand total `flight_count` 46 in place of 904, ratio 1,266 in place of 1,200. Data Studio shows "Data aggregation issue". | `1794637979783.json` |
+| E-26 | Table origin × `flight_count`, `unique_carriers__bsl`, summary row, no raw fields | 4 rows with value 3, grand total 3. Correct. | `1794638193116.json`, `1794638193916.json` |
+| E-27 | Scorecard `flight_count` | getData with one metric and no dimension. Shows 904 = BSL. | `1794638511759.json` |
+| E-28 | Time series on `dep_date`, then dimension type "Year Month" | Both requests ask for `dep_date` at day grain. The chart shows two month points equal to the day rows summed per month. Data Studio buckets the days itself. | `1794638573080.json`, `1794638628861.json` |
+| E-29 | Default date range | `dateRange` is the last 28 days without today when the chart uses "Auto". | `1794637700526.json` |
+
+**Corrections to earlier sections.** Section 7.7 said that summary rows are not safe for `compute: bsl` (E-19). This was wrong: the summary row is a separate query (LS-50), so it is safe (E-26). E-19 applies to date-grain changes (E-28) and to mixed requests (E-25).
 
 ## 8. Request translation
 
@@ -534,8 +555,8 @@ Status of each item: **Derived** (a calculation from the proven values in sectio
 | R-08 | Document the prerequisite: the Workspace organization must permit community connectors and Apps Script. | LS-33. |
 | R-06 | Recommend fewer than 30 data components on one report page. | Item 6. |
 | R-07 | For distinct counts of high-cardinality IDs, use `compute: bsl` on charts with a fixed grain (section 7.7). | Item 3; E-18. |
-| R-09 | Reject a request that contains a BSL-computed measure and raw fields of other measures. | E-20. |
-| R-10 | Generate a description warning for each BSL-computed measure: correct only at the shown grain, not in totals. | E-19. |
+| R-09 | Reject a request that contains a BSL-computed measure and raw fields of other measures. | E-20, E-25. |
+| R-10 | Generate a description warning for each BSL-computed measure: correct only at the shown grain, not in totals. | E-19, E-28. |
 
 ## 11. Release readiness
 
@@ -569,25 +590,30 @@ flowchart LR
 | U-13 | The effective user's quota applies: the owner with owner's credentials, the viewer with viewer's credentials. | LS-32, LS-25 |
 | U-18 | `PERCENTILE` uses linear interpolation. `STDDEV` and `VARIANCE` are population statistics. | LS-39, E-13, E-14 |
 
-### 12.2 Open: needs a real Data Studio report
+### 12.2 Resolved by the real Data Studio report (prototype, section 7.8)
 
-U-03, U-05, U-06 and U-07 also decide where `compute: bsl` is safe (section 7.7). These questions are about the internal behavior of Data Studio. No documentation and no API gives the answer (section 9.6). Each needs a golden fixture or a manual test. U-16 has secondary evidence of a Data Studio timeout (LS-42), but no value. U-15 has documentation that NULL handling can differ between systems (LS-40), but no statement for community connectors.
+| ID | Resolution | Evidence |
+|---|---|---|
+| U-01 | Yes. getData contains only the base fields of a formula metric. | E-22 |
+| U-02 | Yes. The summary row is a separate getData without dimensions. The formula is evaluated on the totals. | LS-50, E-23 |
+| U-03 | The summary row of a `compute: bsl` metric is correct when the request has no raw fields. With raw fields all columns are wrong and Data Studio shows a warning. | E-25, E-26 |
+| U-05 | Yes. A scorecard sends metrics only, no dimensions. | E-27 |
+| U-06 | Yes. Data Studio requests the day field and buckets to months itself. | E-28 |
+| U-14 | Yes. A formula can refer to a hidden dimension and Data Studio requests it. | E-24 |
+| U-15 | No. `COUNT_DISTINCT` does not count NULL. Same as BSL. | E-24 |
+| U-17 | 12 hours. | LS-51 |
+| U-19 | NULL. | E-24 |
+
+### 12.3 Open: needs a real Data Studio report
+
+These questions are about the internal behavior of Data Studio. No documentation and no API gives the answer (section 9.6). Each needs a golden fixture or a manual test. U-16 has secondary evidence of a Data Studio timeout (LS-42), but no value. The prototype report (section 7.8) can answer them with little effort.
 
 | ID | Question | How to verify |
 |---|---|---|
-| U-01 | Does Data Studio request only the base fields of a formula metric in getData? | Golden fixture with a formula metric. |
-| U-02 | Does the summary row evaluate the formula from summed bases (LS-23)? | Golden fixture plus a visual check of one report. |
-| U-03 | What does the summary row show for a metric with `isReaggregatable` false? | Manual test. Record the result in this document. |
 | U-04 | How does Data Studio join the responses of a request split at 20 fields (LS-13)? | Chart with more than 20 fields. Compare the result with BSL. |
-| U-05 | Does a scorecard send a getData request with metrics only and no dimensions? | Golden fixture. |
-| U-06 | For a time series by month, does Data Studio request the day field and aggregate itself? | Golden fixture. |
 | U-07 | Do filters on charts with non-reaggregatable metrics cause LS-24 errors? | Manual test. |
-| U-14 | Can a metric formula refer to a hidden dimension? Does Data Studio then request that dimension in getData? | Golden fixture with `COUNT_DISTINCT($x__value)`. |
-| U-15 | Does Data Studio `COUNT_DISTINCT` count NULL as a value? | Golden fixture with a NULL value. Compare with E-10. |
 | U-16 | Does Data Studio stop waiting for getData before the 6-minute Apps Script limit? | API endpoint with a configurable delay. |
-| U-19 | Does Data Studio show NULL or 0 for `SUM` over rows that are all NULL? | Golden fixture. The simulator models NULL (E-21). |
 | U-20 | Which SQL does the native PostgreSQL connector send for a table body, a summary row, a scorecard, a filter and a date-grain change? Does it send a separate query for the summary row? | Statement log of a plain PostgreSQL database (section 14.3). |
-| U-17 | Which data freshness options does Data Studio offer for this connector? | Check the data source settings after the first deployment. |
 
 ## 13. Open items
 

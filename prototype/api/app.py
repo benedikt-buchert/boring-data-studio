@@ -11,6 +11,7 @@ import ibis
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from ibis.expr import operations as ops
 
 HERE = Path(__file__).parent
@@ -159,6 +160,9 @@ async def data(req: Request):
         if isinstance(mm, tuple): extra[mm[0]] = mm[1]
     if extra: m = m.with_measures(**extra)
     measures = [MEASURE_MAP[i] if isinstance(MEASURE_MAP[i], str) else MEASURE_MAP[i][0] for i in metrics]
+    # R-09 / E-25: a fixed-grain metric must not share a request with raw fields of other measures
+    if any(i.endswith("__bsl") for i in metrics) and any(i in RAW_DIMS for i in dims):
+        return JSONResponse(status_code=400, content={"error": "fixed-grain metric cannot be combined with " + ", ".join(BY_ID[i]["name"] for i in metrics if not i.endswith("__bsl") and BY_ID[i].get("formula"))})
     filters = translate_filters(body.get("dimensionsFilters"))
     applied = filters is not None
     conds = list(filters or [])
