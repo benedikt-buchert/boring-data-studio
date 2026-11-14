@@ -110,3 +110,14 @@ Stable tunnel used for the final run: serveo.net via `ssh -R 80:localhost:8799 s
 | Verifier | `verify_dashboard.py` now compares against `truth.py` (pandas on raw rows). The earlier version took truth from the API itself and could not catch API bugs. |
 
 Totals: 344 dashboard numbers checked across 5 dumps, all equal to independent truth.
+
+## Fog-of-war tests (2026-11-14, no tunnel needed)
+
+| Question | Answer | Architecture impact |
+|---|---|---|
+| Max rows through Apps Script → Data Studio | 1,000,000 ok (13.7 s, ~30 MB); 1,500,000 rejected ("rows over the maximum limit") | Row cap below 1M with own error (R-14); 50 MB UrlFetch limit still untested |
+| Requests per page view | One parallel getData per component (11 at once for page 2), ~1 s Apps Script overhead each, plus auth calls | API must handle N concurrent requests per viewer; 30-execution limit per user is reachable with ~3 viewers (owner's credentials) |
+| Does reload hit the connector? | No. Reload and edit/view switch are served from Data Studio's cache | API cache (D-19) matters less for viewers; matters for cache misses and filter changes |
+| One-to-many joins | BSL exact at the one-side grain; one-side measures over many-side dims are not re-aggregatable (3,000 true vs 11,100 summed) | Classifier must consider join cardinality (R-13) |
+
+Not done: PATH_KEY auth flow (O-02) and the native PostgreSQL connector SQL capture (U-20/O-05). Both need things outside this sandbox: PATH_KEY needs a user re-authorising the connector in the browser; U-20 needs a Postgres reachable from Google's IPs (public TCP tunnel or a cloud instance with billing).

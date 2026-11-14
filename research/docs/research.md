@@ -401,6 +401,10 @@ The prototype in `prototype/` ran the flights model through a real community con
 | E-36 | Same filter, API returns `filtersApplied` false (unsupported IS_NULL before the fix) | Data Studio filters the returned rows itself. Additive and formula metrics stay correct. The `compute: bsl` table breaks: 8 rows for 4 origins with values 1 and 0, no error or warning (answers U-07). | live, before the IS_NULL fix |
 | E-37 | Connector sleeps in `getData` (330 s) for one scorecard | Data Studio shows "System error" between 296 and 300 s after the request (second run; first run bracketed 218–316 s). The Apps Script execution completes after 330.8 s, so the quota is spent. The error text does not come from `newUserError`. | Apps Script Executions, 12:05:32 run |
 | E-38 | Helper measures added with `with_measures` on a model with `joins` | BSL returns the grand total in every row when grouping by a non-join-key dimension (`carrier`); grouping by the join key works. Declared measures are not affected. The prototype showed unfiltered `avg_distance` under a carrier filter until the helpers were declared in the model config. | `prototype/replay_fixtures.py` regression case |
+| E-39 | Connector returns synthetic rows (no API): 10k, 100k, 1M, 1.5M rows of (text, number) | 1,000,000 rows render (Apps Script getData 13.7 s, about 30 MB JSON built and parsed). 1,500,000 rows: "System error … number of rows received … is over the maximum limit". Confirms LS-12 as a hard limit. The 50 MB URL Fetch limit was not exercised (no UrlFetch in this path). | Apps Script Executions 12:24–12:28 |
+| E-40 | Every getData sleeps 4 s; open page 2 (11 data components incl. controls) | 11 getData executions start within 1 second and each takes 4.7–5.7 s, so Data Studio calls the connector fully in parallel, one execution per component (plus one per summary row). Per-call Apps Script overhead is about 0.7–1.5 s. Each page load also runs `getAuthType` and several `isAdminUser`. | Executions 12:31:07–08 |
+| E-41 | Page 4 opened, then browser reload, then switch to edit mode | First open: 4 getData. Reload 40 s later and edit mode 75 s later: **no** getData, only `getAuthType`/`isAdminUser`. Data Studio serves repeated queries from its server cache across reloads and modes (LS-29). Failed results are cached too (LS-52). | Executions 12:33–12:35 |
+| E-42 | BSL one-to-many join (`carriers` → `flights`, `type: many`), 4 carriers incl. one without flights | At the one-side grain BSL is exact: fleet_size per carrier, flight_count, avg_distance per carrier equal pandas truth; grand total fleet 3000 (no fan-out); carriers without flights appear with 0/NULL (left join). Grouped by a many-side dimension (`origin`), fleet_size is the fleet of the distinct carriers per origin (2700) plus a NULL-origin row (300). Summed by Data Studio: 11,100 across origins and 240,600 across days, versus the true 3,000. | `prototype/api` probe, 2026-11-14 |
 | E-29 | Default date range | `dateRange` is the last 28 days without today when the chart uses "Auto". | `1794637700526.json` |
 
 **Corrections to earlier sections.** Section 7.7 said that summary rows are not safe for `compute: bsl` (E-19). This was wrong: the summary row is a separate query (LS-50), so it is safe (E-26). E-19 applies to date-grain changes (E-28) and to mixed requests (E-25).
@@ -569,6 +573,8 @@ Status of each item: **Derived** (a calculation from the proven values in sectio
 | R-10 | Generate a description warning for each BSL-computed measure: correct only at the shown grain, not in totals. | E-19, E-28. |
 | R-11 | When a request contains a `compute: bsl` metric and the API cannot apply all filters, return an error instead of `filtersApplied` false. | E-36. |
 | R-12 | Declare generated helper measures in the BSL model config before building the model. Do not add them with `with_measures` at request time. | E-38. |
+| R-13 | The classifier must include the join path: a measure of the "one" side of a `type: many` join is decomposable only over dimensions of its own side. Over many-side dimensions expose it as fixed grain (`compute: bsl`) or exclude it. | E-42. |
+| R-14 | Budget the API for N parallel requests per page view (N = data components + summary rows) and per-call Apps Script overhead of about 1 s. Keep the global row cap (R-02) below 1,000,000; Data Studio rejects more with an unhelpful system error, so the API must return its own error first (R-01). | E-39, E-40. |
 
 ## 11. Release readiness
 
@@ -618,6 +624,10 @@ flowchart LR
 | U-04 | No split at 21 or 22 fields; one request. | E-34 |
 | U-07 | No LS-24 error. When the API does not apply a filter, a `compute: bsl` metric silently shows wrong, duplicated rows. When the API applies it, the values are correct. Rule: the API must apply every filter on requests that contain a `compute: bsl` metric, or reject the request. | E-36, E-35 |
 | U-16 | Yes: about 300 seconds, before the 6-minute Apps Script limit. | E-37 |
+| — | Row limit: 1,000,000 accepted, 1,500,000 rejected with a system error. | E-39 |
+| — | Parallelism: one parallel getData per component; a page with N components costs N (+ summary rows) executions at once. | E-40 |
+| — | Reloads and mode switches hit the Data Studio cache, not the connector. | E-41 |
+| — | One-to-many joins are correct in BSL; one-side measures are not re-aggregatable over many-side dimensions. | E-42 |
 
 ### 12.3 Open: needs a real Data Studio report
 

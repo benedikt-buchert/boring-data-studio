@@ -46,6 +46,23 @@ function getSchema(request) {
 }
 
 function getData(request) {
+  // PROTOTYPE fog tests (no API, no tunnel). B: PAR_SLEEP_MS > 0 sleeps every getData to expose parallelism.
+  var PAR_SLEEP_MS = 0;
+  if (PAR_SLEEP_MS) Utilities.sleep(PAR_SLEEP_MS);
+  // A: a chart with exactly airports.country x min_delay gets SYN_ROWS synthetic rows built like an API response.
+  var SYN_ROWS = 0;  // set >0 to re-run the row-limit test (1,000,000 ok; 1,500,000 rejected)
+  var names = request.fields.map(function (f) { return f.name; });
+  if (SYN_ROWS && names.length === 2 && names.indexOf('airports__country') >= 0 && names.indexOf('min_delay') >= 0) {
+    var rows = [], ci = names.indexOf('airports__country');
+    for (var i = 0; i < SYN_ROWS; i++) { var vals = [null, null]; vals[ci] = 'c' + ('000000' + i).slice(-7); vals[1 - ci] = i % 997; rows.push({values: vals}); }
+    var parsed = JSON.parse(JSON.stringify({rows: rows}));
+    var f = cc.getFields();
+    request.fields.forEach(function (rf) {
+      if (rf.name === 'airports__country') f.newDimension().setId('airports__country').setName('airports.country').setType(cc.FieldType.TEXT);
+      else f.newMetric().setId('min_delay').setName('min_delay').setType(cc.FieldType.NUMBER).setAggregation(cc.AggregationType.MIN);
+    });
+    return {schema: f.build(), rows: parsed.rows, filtersApplied: false};
+  }
   // PROTOTYPE U-16: how long does Data Studio wait for getData? Only for a chart that requests exactly max_delay.
   var U16_DELAY_MS = 0;  // set to e.g. 330000 to re-run the U-16 timeout test
   if (U16_DELAY_MS && request.fields.length === 1 && request.fields[0].name === 'max_delay') {
