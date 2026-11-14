@@ -13,6 +13,7 @@ cd prototype/api && uv venv -p 3.12 .venv && uv pip install -p .venv/bin/python 
 .venv/bin/uvicorn app:app --port 8799 --reload
 ```
 
+0. `echo <random> > prototype/api/API_KEY` (the API then requires `X-API-Key`).
 1. Expose port 8799 publicly (ngrok / cloudflared / `ssh -R 80:localhost:8799 nokey@localhost.run`).
 2. script.google.com → new project → paste `connector/Code.gs`, enable "Show appsscript.json" and paste `connector/appsscript.json` → Deploy → New deployment → type "Library"/head is enough.
 3. Open `https://lookerstudio.google.com/datasources/create?connectorId=<DEPLOYMENT_ID>`, enter the public URL.
@@ -132,3 +133,7 @@ Not done: PATH_KEY auth flow (O-02) and the native PostgreSQL connector SQL capt
 | Right key | config step → 25/25 fields → scorecard `distance_per_flight` 1,200.41 (correct) |
 | getData request | no `configParams`; URL and key come from the user's stored credentials |
 | API outage | `isAuthValid` pinged the API, so an expired tunnel became a credentials prompt → R-15 |
+
+### Adopted (2026-11-14)
+The main connector (`connector/Code.gs`, deployment AKfycbwVDI6M0Uddi3U99-RIH8yKVHSQrTuRs3iNxbjJih9y) now uses PATH_KEY with R-15 (`isAuthValid` checks stored credentials only; outages become `newUserError` messages). The report re-asked once for path + key; page 3 then verified 47/47 against independent truth (`verification/page3_pathkey.json`). The variant project `BSL Prototype PathKey` is obsolete.
+Why: URL and key are no longer in every data source; a URL change is one re-entry per user instead of one edit per data source; the API is no longer open to anyone with the URL; one published connector serves any API (O-02).

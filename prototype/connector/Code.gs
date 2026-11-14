@@ -1,24 +1,44 @@
 // PROTOTYPE — throwaway. Thin Data Studio community connector for the BSL prototype API.
+// Auth: PATH_KEY (O-02, E-43). Path = API base URL, key = API key; stored per user.
 // Paste into an Apps Script project (script.google.com), set the manifest from appsscript.json, deploy.
 var cc = DataStudioApp.createCommunityConnector();
 
+var props = PropertiesService.getUserProperties();
+
 function getAuthType() {
-  return cc.newAuthTypeResponse().setAuthType(cc.AuthType.NONE).build();
+  return cc.newAuthTypeResponse().setAuthType(cc.AuthType.PATH_KEY).setHelpUrl('https://example.com').build();
 }
+
+// Validate once, when the user enters the credentials.
+function setCredentials(request) {
+  var path = (request.pathKey.path || '').replace(/\/+$/, ''), key = request.pathKey.key;
+  var res = UrlFetchApp.fetch(path + '/schema', {headers: {'X-API-Key': key}, muteHttpExceptions: true});
+  if (res.getResponseCode() !== 200) return {errorCode: 'INVALID_CREDENTIALS'};
+  props.setProperty('bsl.path', path); props.setProperty('bsl.key', key);
+  return {errorCode: 'NONE'};
+}
+
+// R-15: no API call here. Runs on every page load; an outage must not look like a credentials problem.
+function isAuthValid() { return !!(props.getProperty('bsl.path') && props.getProperty('bsl.key')); }
+
+function resetAuth() { props.deleteProperty('bsl.path'); props.deleteProperty('bsl.key'); }
 
 function isAdminUser() { return true; }
 
 function getConfig() {
   var config = cc.getConfig();
-  config.newTextInput().setId('apiUrl').setName('API base URL').setPlaceholder('https://example.com');
+  config.newInfo().setId('info').setText('API URL and key come from the connector credentials (PATH_KEY).');
   config.setDateRangeRequired(true);
   return config.build();
 }
 
 function fetchJson(url, body) {
-  var opts = {muteHttpExceptions: true, contentType: 'application/json'};
+  var opts = {muteHttpExceptions: true, contentType: 'application/json', headers: {'X-API-Key': props.getProperty('bsl.key')}};
   if (body) { opts.method = 'post'; opts.payload = JSON.stringify(body); }
-  var res = UrlFetchApp.fetch(url, opts);
+  var res;
+  try { res = UrlFetchApp.fetch(url, opts); }
+  catch (e) { cc.newUserError().setText('BSL API unreachable at ' + url.split('/').slice(0, 3).join('/') + ' — check the API or update the connector credentials.').throwException(); }
+  if (res.getResponseCode() === 401) cc.newUserError().setText('BSL API rejected the key — update the connector credentials.').throwException();
   if (res.getResponseCode() !== 200) {
     cc.newUserError().setText('API error ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 200)).throwException();
   }
@@ -41,7 +61,7 @@ function buildFields(schema) {
 }
 
 function getSchema(request) {
-  var schema = fetchJson(request.configParams.apiUrl + '/schema').schema;
+  var schema = fetchJson(props.getProperty('bsl.path') + '/schema').schema;
   return {schema: buildFields(schema).build()};
 }
 
@@ -72,7 +92,7 @@ function getData(request) {
     f.newMetric().setId('max_delay').setName('max_delay').setType(cc.FieldType.NUMBER).setAggregation(cc.AggregationType.MAX);
     return {schema: f.build(), rows: [{values: [119]}], filtersApplied: false};
   }
-  var apiUrl = request.configParams.apiUrl;
+  var apiUrl = props.getProperty('bsl.path');
   var res = fetchJson(apiUrl + '/data', request); // /data returns the schema for the requested ids
   return {schema: buildFields(res.schema).build(), rows: res.rows, filtersApplied: res.filtersApplied};
 }

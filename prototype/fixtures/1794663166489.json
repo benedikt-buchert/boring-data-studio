@@ -1,0 +1,17 @@
+{
+ "configParams": {
+  "apiUrl": "https://215ff07ef4a86a50-195-52-178-55.serveousercontent.com"
+ },
+ "fields": [
+  {
+   "name": "max_delay"
+  }
+ ],
+ "scriptParams": {
+  "lastRefresh": "1794662925466"
+ },
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ }
+}

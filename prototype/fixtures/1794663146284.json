@@ -1,0 +1,17 @@
+{
+ "scriptParams": {
+  "lastRefresh": "1794662925466"
+ },
+ "fields": [
+  {
+   "name": "median_delay"
+  }
+ ],
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ },
+ "configParams": {
+  "apiUrl": "https://215ff07ef4a86a50-195-52-178-55.serveousercontent.com"
+ }
+}

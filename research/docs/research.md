@@ -646,7 +646,7 @@ These questions are about the internal behavior of Data Studio. No documentation
 | ID | Item | Owner |
 |---|---|---|
 | O-01 | Extend the BSL FastAPI app, or build a separate app that only uses BSL as a library (section 4.3). | Team |
-| O-02 | Use `PATH_KEY` from version 1 (section 11.2). | Team — **verified feasible (E-43)**; decision left: key distribution (R-16) |
+| O-02 | Use `PATH_KEY` from version 1 (section 11.2). | Team — **adopted in the prototype (E-43)**: the main connector uses PATH_KEY. Open: key distribution (R-16) |
 | O-03 | Detailed design of all parts (section 13.1). | Wayfinder |
 | O-04 | Production cache design, for example Redis (D-19). | Later |
 | O-05 | Evaluate the PostgreSQL-protocol alternative (sections 14.1 and 14.3): expose BSL through the PostgreSQL wire protocol and use the native PostgreSQL connector. This avoids the Apps Script limits, but Data Studio then generates SQL that the API must translate. | Later |
