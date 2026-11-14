@@ -59,3 +59,19 @@ U-01 base fields only? · U-02 summary row from summed bases? · U-03 `__bsl` in
 Feasible. The whole chain works in the real product: BSL YAML → classifier → `/schema` with `$`-formulas, hidden helpers, descriptions → Apps Script builder → Data Studio field list → correct per-row and summary-row values for ratio, mean and distinct-count metrics, with totals equal to BSL. Two hard rules fall out of the live run: never `setAggregation` on `isReaggregatable=false` fields, and never let a `compute: bsl` metric share a request with raw fields (R-09) — Data Studio shows a "bad reaggregation" warning and corrupts every column. `compute: bsl` is safe for tables with summary rows (separate total query) but not for client-side date re-bucketing.
 
 Report: https://datastudio.google.com/reporting/9559732f-1452-4c24-bab8-761cf8ab67e0 · Data source: https://datastudio.google.com/datasources/a12eede9-6afc-465f-86a5-0c5a6984acba · Apps Script: https://script.google.com/home/projects/1mwH_cLLtqaEKPttW8ZDTK66vX_YmQQQM1pq5le7ihtYxdlp-pnQZoYdr
+
+## Showcase dashboard (report page 2, theme "Constellation")
+
+Built live on 2026-11-14 to show every research case on one page:
+
+| Component | Research case |
+|---|---|
+| Title text | — |
+| Scorecards `flight_count`, `distance_per_flight`, `avg_distance`, `unique_carriers` | U-05 metrics-only requests; formula metrics on totals (E-23) |
+| Table origin × flight_count, distance_per_flight, avg_distance, unique_carriers, summary row | E-22/E-23 base-field requests, summary row from a separate query; U-19 all-NULL SFO row |
+| Time series `dep_date` (Year Month) × avg_distance, distance_per_flight | E-28 client-side month bucketing of day rows; ratios still correct because the bases are additive |
+| Table origin × total_distance, `unique_carriers (fixed grain)`, summary row | E-26 `compute: bsl` safe without raw fields; R-09 guard in the API rejects the mixed case |
+| Bar chart carrier × avg_distance | mean via hidden helpers at a second grain |
+| Date range control + carrier drop-down | `dateRange` translation; `dimensionsFilters` translation (IN_LIST → BSL `in`) |
+
+Caveat: the free localhost.run tunnel drops every few minutes; Data Studio caches each failed query ("Address unavailable", LS-52) until the chart or the data source config changes. For a stable demo run the API behind ngrok/cloudflared and update the data source URL once.
