@@ -1,0 +1,20 @@
+{
+ "fields": [
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "total_distance"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ },
+ "configParams": {
+  "apiUrl": "https://5abc69d75634e9.app.lhr.life"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794639907743"
+ }
+}

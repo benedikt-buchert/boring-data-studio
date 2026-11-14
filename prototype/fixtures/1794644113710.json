@@ -1,0 +1,29 @@
+{
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794640108855"
+ },
+ "fields": [
+  {
+   "name": "airports__city"
+  },
+  {
+   "name": "delayed_flights"
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "median_delay"
+  },
+  {
+   "name": "pct_of_total"
+  }
+ ],
+ "configParams": {
+  "apiUrl": "https://5abc69d75634e9.app.lhr.life"
+ }
+}

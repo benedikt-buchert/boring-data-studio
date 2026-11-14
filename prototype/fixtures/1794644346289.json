@@ -1,0 +1,32 @@
+{
+ "configParams": {
+  "apiUrl": "https://215ff07ef4a86a50-195-52-178-55.serveousercontent.com"
+ },
+ "fields": [
+  {
+   "name": "avg_distance__count"
+  },
+  {
+   "name": "avg_distance__sum"
+  },
+  {
+   "name": "carrier__value"
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "origin"
+  },
+  {
+   "name": "total_distance"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794644169753"
+ }
+}

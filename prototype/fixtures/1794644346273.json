@@ -1,0 +1,23 @@
+{
+ "scriptParams": {
+  "lastRefresh": "1794644169753"
+ },
+ "configParams": {
+  "apiUrl": "https://215ff07ef4a86a50-195-52-178-55.serveousercontent.com"
+ },
+ "fields": [
+  {
+   "name": "origin"
+  },
+  {
+   "name": "total_distance"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ }
+}

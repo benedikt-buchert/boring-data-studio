@@ -1,0 +1,20 @@
+{
+ "fields": [
+  {
+   "name": "carrier"
+  },
+  {
+   "name": "carrier__value"
+  }
+ ],
+ "configParams": {
+  "apiUrl": "https://5abc69d75634e9.app.lhr.life"
+ },
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794638016920"
+ }
+}

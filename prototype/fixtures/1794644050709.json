@@ -1,0 +1,29 @@
+{
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794640835657"
+ },
+ "configParams": {
+  "apiUrl": "https://54434c759a23b39f-195-52-178-55.serveousercontent.com"
+ },
+ "fields": [
+  {
+   "name": "carrier"
+  },
+  {
+   "name": "delayed_flights"
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "median_delay"
+  },
+  {
+   "name": "pct_of_total"
+  }
+ ]
+}

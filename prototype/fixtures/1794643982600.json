@@ -1,0 +1,14 @@
+{
+ "fields": [
+  {
+   "name": "dep_date"
+  },
+  {
+   "name": "flight_count"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ }
+}

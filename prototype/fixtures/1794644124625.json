@@ -1,0 +1,20 @@
+{
+ "scriptParams": {
+  "lastRefresh": "1794640108855"
+ },
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ },
+ "configParams": {
+  "apiUrl": "https://5abc69d75634e9.app.lhr.life"
+ },
+ "fields": [
+  {
+   "name": "carrier"
+  },
+  {
+   "name": "total_distance"
+  }
+ ]
+}

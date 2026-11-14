@@ -1,0 +1,10 @@
+{
+ "fields": [
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  }
+ ]
+}

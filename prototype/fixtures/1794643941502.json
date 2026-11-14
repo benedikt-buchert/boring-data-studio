@@ -1,0 +1,39 @@
+{
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794640835657"
+ },
+ "configParams": {
+  "apiUrl": "https://f3dc31257f76e519-195-52-178-55.serveousercontent.com"
+ },
+ "fields": [
+  {
+   "forFilterOnly": true,
+   "name": "carrier"
+  },
+  {
+   "name": "carrier__value"
+  }
+ ],
+ "dimensionsFilters": [
+  [
+   {
+    "values": [
+     "AA"
+    ],
+    "type": "EXCLUDE",
+    "operator": "IN_LIST",
+    "fieldName": "carrier"
+   },
+   {
+    "type": "INCLUDE",
+    "fieldName": "carrier",
+    "operator": "IS_NULL",
+    "values": []
+   }
+  ]
+ ]
+}

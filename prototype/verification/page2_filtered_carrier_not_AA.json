@@ -1,0 +1,15 @@
+{
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ },
+ "filter": "carrier_not_AA",
+ "components": [
+  "origin\nflight_count\n\u25bc\ndistance_per_flight\navg_distance\nunique_carriers\n1.\nORD\n153\n1,665.87\n1,665.87\n2\n2.\nSFO\n142\nnull\nnull\n2\n3.\nJFK\n134\n1,690.9\n1,690.9\n2\n4.\nLAX\n133\n1,489.95\n1,489.95\n2\nGrand total\n562\n1,209.29\n1,618.15\n2\n1 - 4 / 4<>",
+  "flight_count\n562",
+  "distance_per_flight\n1,209.29",
+  "avg_distance\n1,618.15",
+  "unique_carriers\n2",
+  "origin\ntotal_distance\n\u25bc\nunique_carriers (fixed grain)\n1.\nORD\n254,878\n2\n2.\nJFK\n226,580\n2\n3.\nLAX\n198,164\n2\n4.\nSFO\nnull\n2\nGrand total\n679,622\n2\n1 - 4 / 4<>"
+ ]
+}

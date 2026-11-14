@@ -1,0 +1,23 @@
+{
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ },
+ "fields": [
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "origin"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  }
+ ],
+ "scriptParams": {
+  "lastRefresh": "1794638016920"
+ },
+ "configParams": {
+  "apiUrl": "https://d394880b0b1a9e.app.lhr.life"
+ }
+}

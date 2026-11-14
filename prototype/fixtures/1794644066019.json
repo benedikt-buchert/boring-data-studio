@@ -1,0 +1,17 @@
+{
+ "fields": [
+  {
+   "name": "carrier"
+  },
+  {
+   "name": "avg_distance__sum"
+  },
+  {
+   "name": "avg_distance__count"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2000-01-01",
+  "endDate": "2100-01-01"
+ }
+}

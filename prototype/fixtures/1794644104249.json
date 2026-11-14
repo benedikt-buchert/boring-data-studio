@@ -1,0 +1,17 @@
+{
+ "scriptParams": {
+  "lastRefresh": "1794640017703"
+ },
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ },
+ "configParams": {
+  "apiUrl": "https://5abc69d75634e9.app.lhr.life"
+ },
+ "fields": [
+  {
+   "name": "flight_count"
+  }
+ ]
+}

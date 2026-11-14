@@ -1,0 +1,42 @@
+{
+ "fields": [
+  {
+   "name": "origin"
+  },
+  {
+   "name": "total_distance"
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "avg_distance__sum"
+  },
+  {
+   "name": "avg_distance__count"
+  },
+  {
+   "name": "carrier__value"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2026-08-01",
+  "endDate": "2026-08-31"
+ },
+ "dimensionsFilters": [
+  [
+   {
+    "fieldName": "carrier",
+    "values": [
+     "AA",
+     "UA"
+    ],
+    "type": "INCLUDE",
+    "operator": "IN_LIST"
+   }
+  ]
+ ]
+}

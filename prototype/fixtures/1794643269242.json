@@ -1,0 +1,32 @@
+{
+ "fields": [
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "total_distance"
+  },
+  {
+   "name": "avg_distance__sum"
+  },
+  {
+   "name": "avg_distance__count"
+  },
+  {
+   "name": "delayed_flights"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  },
+  {
+   "name": "median_delay"
+  },
+  {
+   "name": "pct_of_total"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ }
+}

@@ -1,0 +1,20 @@
+{
+ "fields": [
+  {
+   "name": "avg_distance__count"
+  },
+  {
+   "name": "avg_distance__sum"
+  }
+ ],
+ "scriptParams": {
+  "lastRefresh": "1794640835657"
+ },
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ },
+ "configParams": {
+  "apiUrl": "https://54434c759a23b39f-195-52-178-55.serveousercontent.com"
+ }
+}

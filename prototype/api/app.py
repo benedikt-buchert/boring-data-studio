@@ -3,10 +3,11 @@
 Run:  .venv/bin/uvicorn app:app --port 8787
 Every getData request body is logged to ../fixtures/<n>.json (golden fixtures, section 9.4).
 """
-import json, time
+import asyncio, json, time
 from pathlib import Path
 
 import boring_semantic_layer as bsl
+import yaml
 import ibis
 import numpy as np
 import pandas as pd
@@ -31,7 +32,10 @@ df.loc[df.origin == "SFO", "distance"] = None  # all-NULL group -> U-19
 t = ibis.memtable(df).mutate(dep_date=ibis._.dep_date.cast("date"))
 airports = ibis.memtable(pd.DataFrame({"code": ["JFK", "LAX", "ORD", "SFO"], "city": ["New York", "Los Angeles", "Chicago", "San Francisco"],
                                        "country": ["United States"] * 4, "state": ["New York", "California", "Illinois", "California"]}))
-MODEL = bsl.from_yaml(str(HERE / "flights.yml"), tables={"flights_tbl": t, "airports_tbl": airports})["flights"]
+CFG = yaml.safe_load(open(HERE / "flights.yml"))
+TABLES = {"flights_tbl": t, "airports_tbl": airports}
+MODEL = bsl.from_config(CFG, tables=TABLES)["flights"]  # rebuilt below with helper measures declared
+HELPERS = {}  # helper id -> BSL expression; declared in the config, never added with with_measures (breaks GROUP BY on joined models)
 short = lambda name: name[8:] if name.startswith("flights.") else name  # own-model names stay plain
 DS_ID = lambda name: short(name).replace(".", "__")  # LS-02: join dims are "airports.city" in BSL, ids must be [A-Za-z0-9_]
 BSL_NAME = {}
@@ -81,8 +85,8 @@ def build_schema():
             col = node.arg.name
             fields.append(field(f"{name}__sum", f"{name} sum", "METRIC", "NUMBER", agg="SUM", hidden=True))
             fields.append(field(f"{name}__count", f"{name} count", "METRIC", "NUMBER", agg="SUM", hidden=True))
-            measure_map[f"{name}__sum"] = (f"{name}__sum", lambda x, c=col: x[c].sum())
-            measure_map[f"{name}__count"] = (f"{name}__count", lambda x, c=col: x[c].count())
+            HELPERS[f"{name}__sum"], HELPERS[f"{name}__count"] = f"_.{col}.sum()", f"_.{col}.count()"
+            measure_map[f"{name}__sum"], measure_map[f"{name}__count"] = f"{name}__sum", f"{name}__count"
             fields.append(field(name, name, "METRIC", "NUMBER", agg="AUTO", formula=f"SUM(${name}__sum) / SUM(${name}__count)", desc=desc))
         elif kind == "CountDistinct":
             col = node.arg.name
@@ -135,21 +139,24 @@ class F:
 def render_calc(fn): return fn(FormulaScope()).s
 
 SCHEMA, MEASURE_MAP, RAW_DIMS = build_schema()
+CFG["flights"]["measures"].update(HELPERS)
+MODEL = bsl.from_config(CFG, tables=TABLES)["flights"]
 BY_ID = {f["id"]: f for f in SCHEMA}
 
 # --- request translation (section 8) ---------------------------------------
-OPS = {"EQUALS": "=", "IN_LIST": "in"}
+# Data Studio operator -> (INCLUDE, EXCLUDE) BSL operator. Anything else -> filtersApplied false (LS-16 fallback).
+OPS = {"EQUALS": ("=", "!="), "IN_LIST": ("in", "not in"), "IS_NULL": ("is null", "is not null")}
 def translate_filters(groups):
     out = []
     for group in groups or []:
         ors = []
         for c in group:
-            op = OPS.get(c["operator"])
-            if op is None: return None
-            if c["type"] == "EXCLUDE": op = {"=": "!=", "in": "not in"}[op]
-            fname = RAW_DIMS.get(c["fieldName"], c["fieldName"])
-            ors.append({"field": fname, "operator": op, "values": c["values"]} if "in" in op
-                       else {"field": fname, "operator": op, "value": c["values"][0]})
+            if c["operator"] not in OPS: return None
+            op = OPS[c["operator"]][c["type"] == "EXCLUDE"]
+            fname = RAW_DIMS.get(c["fieldName"], BSL_NAME.get(c["fieldName"], c["fieldName"]))
+            if op in ("in", "not in"): ors.append({"field": fname, "operator": op, "values": c["values"]})
+            elif op.startswith("is "): ors.append({"field": fname, "operator": op})
+            else: ors.append({"field": fname, "operator": op, "value": c["values"][0]})
         out.append({"operator": "OR", "conditions": ors} if len(ors) > 1 else ors[0])
     return out
 
@@ -163,22 +170,21 @@ async def data(req: Request):
     body = await req.json()
     FIX.mkdir(exist_ok=True)
     (FIX / f"{int(time.time()*1000)}.json").write_text(json.dumps(body, indent=1))
-    ids = [f["name"] for f in body["fields"]]
+    # shortcut: test switches as flag files (U-07, U-16); delete the files to turn them off
+    if any(f["name"] == "max_delay" for f in body["fields"]) and (HERE / "DELAY_SECONDS").exists():
+        await asyncio.sleep(float((HERE / "DELAY_SECONDS").read_text()))
+    filters = None if (HERE / "FORCE_NO_PUSHDOWN").exists() else translate_filters(body.get("dimensionsFilters"))
+    applied = filters is not None
+    # LS-16: filters applied -> drop forFilterOnly fields; not applied -> return them so Data Studio filters
+    ids = [f["name"] for f in body["fields"] if not (applied and f.get("forFilterOnly"))]
     dims = [i for i in ids if BY_ID[i]["type"] == "DIMENSION"]
     bsl_dims = list(dict.fromkeys(RAW_DIMS.get(i, BSL_NAME.get(i, i)) for i in dims))  # x and x__value share one column
     metrics = [i for i in ids if BY_ID[i]["type"] == "METRIC"]
     m = MODEL
-    extra = {}
-    for i in metrics:
-        mm = MEASURE_MAP[i]
-        if isinstance(mm, tuple): extra[mm[0]] = mm[1]
-    if extra: m = m.with_measures(**extra)
-    measures = [MEASURE_MAP[i] if isinstance(MEASURE_MAP[i], str) else MEASURE_MAP[i][0] for i in metrics]
+    measures = [MEASURE_MAP[i] for i in metrics]
     # R-09 / E-25: a fixed-grain metric must not share a request with raw fields of other measures
-    if any(i.endswith("__bsl") for i in metrics) and any(i in RAW_DIMS for i in dims):
-        return JSONResponse(status_code=400, content={"error": "fixed-grain metric cannot be combined with " + ", ".join(BY_ID[i]["name"] for i in metrics if not i.endswith("__bsl") and BY_ID[i].get("formula"))})
-    filters = translate_filters(body.get("dimensionsFilters"))
-    applied = filters is not None
+    if any(BY_ID[i].get("isReaggregatable") is False for i in metrics) and any(i in RAW_DIMS for i in dims):
+        return JSONResponse(status_code=400, content={"error": "fixed-grain metric cannot be combined with distinct-count metrics in one chart"})
     conds = list(filters or [])
     dr = body.get("dateRange")
     if dr:
@@ -190,7 +196,7 @@ async def data(req: Request):
     for _, r in res.iterrows():
         vals = []
         for i in ids:
-            col = RAW_DIMS.get(i, BSL_NAME.get(i, i)) if BY_ID[i]["type"] == "DIMENSION" else (MEASURE_MAP[i] if isinstance(MEASURE_MAP[i], str) else MEASURE_MAP[i][0])
+            col = RAW_DIMS.get(i, BSL_NAME.get(i, i)) if BY_ID[i]["type"] == "DIMENSION" else MEASURE_MAP[i]
             v = r[col] if col in r.index else r[col.replace(".", "_")]
             if v is None or (isinstance(v, float) and np.isnan(v)): vals.append(None)
             elif i == "dep_date": vals.append(pd.Timestamp(v).strftime("%Y%m%d"))

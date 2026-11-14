@@ -1,0 +1,10 @@
+{
+ "fields": [
+  {
+   "name": "origin"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  }
+ ]
+}

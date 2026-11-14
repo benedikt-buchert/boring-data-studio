@@ -1,0 +1,23 @@
+{
+ "fields": [
+  {
+   "name": "airports__city"
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "delayed_flights"
+  },
+  {
+   "name": "pct_of_total"
+  },
+  {
+   "name": "median_delay"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ }
+}

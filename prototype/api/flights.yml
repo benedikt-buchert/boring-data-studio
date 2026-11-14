@@ -36,6 +36,20 @@ flights:
       metadata: {looker_studio: {semantic_type: NUMBER}}
     avg_distance: _.distance.mean()
     max_delay: _.delay.max()
+    total_delay: _.delay.sum()
+    min_delay: _.delay.min()
+    max_distance: _.distance.max()
+    min_distance: _.distance.min()
+    avg_delay: _.delay.mean()
+    long_haul_flights:
+      expr: (_.distance > 2000).sum()
+      description: "Flights longer than 2000 miles"
+    short_haul_flights:
+      expr: (_.distance < 500).sum()
+      description: "Flights shorter than 500 miles"
+    early_flights:
+      expr: (_.delay < 5).sum()
+      description: "Flights delayed less than 5 minutes"
     delayed_flights:
       expr: (_.delay > 30).sum()
       description: "Flights delayed more than 30 minutes (conditional measure)"

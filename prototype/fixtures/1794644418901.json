@@ -1,0 +1,54 @@
+{
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ },
+ "dimensionsFilters": [
+  [
+   {
+    "fieldName": "carrier",
+    "type": "EXCLUDE",
+    "values": [
+     "AA"
+    ],
+    "operator": "IN_LIST"
+   },
+   {
+    "type": "INCLUDE",
+    "operator": "IS_NULL",
+    "values": [],
+    "fieldName": "carrier"
+   }
+  ]
+ ],
+ "fields": [
+  {
+   "name": "avg_distance__count"
+  },
+  {
+   "name": "avg_distance__sum"
+  },
+  {
+   "forFilterOnly": true,
+   "name": "carrier"
+  },
+  {
+   "name": "carrier__value"
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "origin"
+  },
+  {
+   "name": "total_distance"
+  }
+ ],
+ "scriptParams": {
+  "lastRefresh": "1794644169753"
+ },
+ "configParams": {
+  "apiUrl": "https://215ff07ef4a86a50-195-52-178-55.serveousercontent.com"
+ }
+}

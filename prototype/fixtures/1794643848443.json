@@ -1,0 +1,13 @@
+{
+ "fields": [
+  {
+   "name": "origin"
+  },
+  {
+   "name": "carrier__value"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  }
+ ]
+}

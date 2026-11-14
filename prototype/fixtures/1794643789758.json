@@ -1,0 +1,29 @@
+{
+ "fields": [
+  {
+   "name": "avg_distance__count"
+  },
+  {
+   "name": "avg_distance__sum"
+  },
+  {
+   "name": "carrier__value"
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "total_distance"
+  }
+ ],
+ "configParams": {
+  "apiUrl": "https://d394880b0b1a9e.app.lhr.life"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794594631951"
+ },
+ "dateRange": {
+  "startDate": "2026-10-16",
+  "endDate": "2026-11-12"
+ }
+}

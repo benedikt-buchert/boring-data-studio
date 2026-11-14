@@ -1,0 +1,10 @@
+{
+ "fields": [
+  {
+   "name": "total_distance"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  }
+ ]
+}

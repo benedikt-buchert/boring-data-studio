@@ -1,0 +1,42 @@
+{
+ "dimensionsFilters": [
+  [
+   {
+    "values": [
+     "AA"
+    ],
+    "operator": "IN_LIST",
+    "fieldName": "carrier",
+    "type": "EXCLUDE"
+   },
+   {
+    "operator": "IS_NULL",
+    "type": "INCLUDE",
+    "values": [],
+    "fieldName": "carrier"
+   }
+  ]
+ ],
+ "configParams": {
+  "apiUrl": "https://215ff07ef4a86a50-195-52-178-55.serveousercontent.com"
+ },
+ "fields": [
+  {
+   "name": "carrier",
+   "forFilterOnly": true
+  },
+  {
+   "name": "flight_count"
+  },
+  {
+   "name": "total_distance"
+  }
+ ],
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794644169753"
+ }
+}

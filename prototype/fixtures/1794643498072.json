@@ -1,0 +1,42 @@
+{
+ "fields": [
+  {
+   "forFilterOnly": true,
+   "name": "carrier"
+  },
+  {
+   "name": "total_distance"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  }
+ ],
+ "dateRange": {
+  "startDate": "2026-10-17",
+  "endDate": "2026-11-13"
+ },
+ "configParams": {
+  "apiUrl": "https://f3dc31257f76e519-195-52-178-55.serveousercontent.com"
+ },
+ "scriptParams": {
+  "lastRefresh": "1794640835657"
+ },
+ "dimensionsFilters": [
+  [
+   {
+    "type": "EXCLUDE",
+    "values": [
+     "AA"
+    ],
+    "operator": "IN_LIST",
+    "fieldName": "carrier"
+   },
+   {
+    "operator": "IS_NULL",
+    "values": [],
+    "fieldName": "carrier",
+    "type": "INCLUDE"
+   }
+  ]
+ ]
+}

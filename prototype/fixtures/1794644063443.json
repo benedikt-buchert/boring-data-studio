@@ -1,0 +1,23 @@
+{
+ "scriptParams": {
+  "lastRefresh": "1794638016920"
+ },
+ "dateRange": {
+  "endDate": "2026-11-13",
+  "startDate": "2026-10-17"
+ },
+ "configParams": {
+  "apiUrl": "https://9a33cdf6dcb0dd.app.lhr.life"
+ },
+ "fields": [
+  {
+   "name": "dep_date"
+  },
+  {
+   "name": "total_distance"
+  },
+  {
+   "name": "unique_carriers__bsl"
+  }
+ ]
+}
