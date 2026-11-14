@@ -151,7 +151,7 @@ async def data(req: Request):
     (FIX / f"{int(time.time()*1000)}.json").write_text(json.dumps(body, indent=1))
     ids = [f["name"] for f in body["fields"]]
     dims = [i for i in ids if BY_ID[i]["type"] == "DIMENSION"]
-    bsl_dims = [RAW_DIMS.get(i, i) for i in dims]
+    bsl_dims = list(dict.fromkeys(RAW_DIMS.get(i, i) for i in dims))  # x and x__value share one column
     metrics = [i for i in ids if BY_ID[i]["type"] == "METRIC"]
     m = MODEL
     extra = {}
