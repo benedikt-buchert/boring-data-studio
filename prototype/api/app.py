@@ -203,5 +203,6 @@ if __name__ == "__main__":  # self-check
     print(json.dumps(SCHEMA, indent=1))
     assert BY_ID["distance_per_flight"]["formula"] == "(SUM($total_distance) / SUM($flight_count))"
     assert BY_ID["unique_carriers"]["formula"] == "COUNT_DISTINCT($carrier__value)"
-    assert "pct_of_total" not in BY_ID and "median_delay" not in BY_ID
-    assert BY_ID["unique_carriers__bsl"]["isReaggregatable"] is False
+    assert BY_ID["pct_of_total"]["isReaggregatable"] is False and BY_ID["median_delay"]["isReaggregatable"] is False  # compute: bsl
+    assert BY_ID["unique_carriers__bsl"]["isReaggregatable"] is False and "aggregation" not in BY_ID["unique_carriers__bsl"]  # LS-49
+    assert BY_ID["on_time_rate"]["formula"] == "(1 - (SUM($delayed_flights) / SUM($flight_count)))"
