@@ -1,0 +1,4 @@
+{"dateRange": {"startDate": "2026-10-17", "endDate": "2026-11-13"}, "components": [
+"airports.city\nflight_count\n▼\ndelayed_flights\non_time_rate\npct_of_total\nmedian_delay\n1.\nSan Francisco\n232\n175\n0.25\nnull\n68\n2.\nNew York\n228\n173\n0.24\n34.5%\n59\n3.\nChicago\n227\n171\n0.25\n34.67%\n58\n4.\nLos Angeles\n217\n163\n0.25\n30.83%\n61\nGrand total\n904\n682\n0.25\n100%\n61.5\n1 - 4 / 4<>",
+"carrier\nflight_count\n▼\non_time_rate\nmedian_delay\npct_of_total\n1.\nAA\n342\n0.24\n59\n37.37%\n2.\nUA\n293\n0.28\n59\n33.03%\n3.\nDL\n223\n0.24\n66\n24.23%\n4.\nnull\n46\n0.15\n70\n5.37%\nGrand total\n904\n0.25\n61.5\n100%\n1 - 4 / 4<>",
+"median_delay\n61.5", "on_time_rate\n0.25"]}

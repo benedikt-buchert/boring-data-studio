@@ -1,3 +1,17 @@
+airports:
+  table: airports_tbl
+  description: "Airport reference data"
+  dimensions:
+    code: _.code
+    city:
+      expr: _.city
+      description: "Airport city"
+    country:
+      expr: _.country
+      description: "Airport country (ISO name)"
+  measures:
+    airport_count: _.count()
+
 flights:
   table: flights_tbl
   description: "Flight data model"
@@ -22,14 +36,31 @@ flights:
       metadata: {looker_studio: {semantic_type: NUMBER}}
     avg_distance: _.distance.mean()
     max_delay: _.delay.max()
+    delayed_flights:
+      expr: (_.delay > 30).sum()
+      description: "Flights delayed more than 30 minutes (conditional measure)"
     unique_carriers:
       expr: _.carrier.nunique()
       description: "Distinct carriers"
       metadata: {looker_studio: {compute: both}}
-    median_delay: _.delay.median()
+    median_delay:
+      expr: _.delay.median()
+      description: "Median departure delay in minutes (computed by BSL at the shown grain)"
+      metadata: {looker_studio: {compute: bsl}}
   calculated_measures:
     distance_per_flight:
       expr: _.total_distance / _.flight_count
       description: "Average distance per flight"
+    on_time_rate:
+      expr: 1 - _.delayed_flights / _.flight_count
+      description: "Share of flights delayed 30 min or less"
     pct_of_total:
-      expr: _.total_distance / _.all(_.total_distance) * 100
+      expr: _.total_distance / _.all(_.total_distance)
+      description: "Share of all distance, in percent (computed by BSL at the shown grain)"
+      metadata: {looker_studio: {compute: bsl, semantic_type: PERCENT}}
+  joins:
+    airports:
+      model: airports
+      type: one
+      left_on: origin
+      right_on: code

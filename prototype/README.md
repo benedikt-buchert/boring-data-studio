@@ -75,3 +75,25 @@ Built live on 2026-11-14 to show every research case on one page:
 | Date range control + carrier drop-down | `dateRange` translation; `dimensionsFilters` translation (IN_LIST → BSL `in`) |
 
 Caveat: the free localhost.run tunnel drops every few minutes; Data Studio caches each failed query ("Address unavailable", LS-52) until the chart or the data source config changes. For a stable demo run the API behind ngrok/cloudflared and update the data source URL once.
+
+## Page 3 — "what only a semantic layer gives Data Studio"
+
+Model additions (`api/flights.yml`): `airports` model + `joins: airports` (left, one) → dimensions `airports.city/country` exposed as `airports__city/__country` (LS-02 `__` mapping); conditional measure `delayed_flights = (_.delay > 30).sum()` → plain SUM metric; `on_time_rate = 1 - delayed_flights / flight_count` → formula `(1 - (SUM($delayed_flights) / SUM($flight_count)))`; `pct_of_total` (uses `.all()`) and `median_delay` with `compute: bsl` → fixed-grain fields, PERCENT semantic type on the share.
+
+| Component | Shows |
+|---|---|
+| Table airports.city × flight_count, delayed_flights, on_time_rate, pct_of_total, median_delay + summary | joined dimension, conditional ratio, share-of-total and median per city with correct totals (100 %, 61.5) |
+| Bar airports.city × on_time_rate | ratio at a joined grain |
+| Table carrier × flight_count, on_time_rate, median_delay, pct_of_total + summary | same metrics at another grain; NULL carrier row |
+| Scorecards median_delay 61.5, on_time_rate 0.25 | fixed-grain and formula metrics as totals |
+
+## Verification
+
+`verify_dashboard.py` reads every number from the dashboard DOM dump (`verification/*.json`, dumped from the report via the browser) and compares it with BSL truth from `/data` for the same date range (2026-10-17..2026-11-13):
+
+- page 2 (dashboard): **34/34 values match**
+- page 3 (semantic layer): **47/47 values match**
+
+Run: `api/.venv/bin/python verify_dashboard.py verification/page3_semantic_layer.json`.
+
+Stable tunnel used for the final run: serveo.net via `ssh -R 80:localhost:8799 serveo.net` (random subdomain, stable for the ssh session, no interstitial for non-browser clients).

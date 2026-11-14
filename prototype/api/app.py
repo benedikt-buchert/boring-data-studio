@@ -29,7 +29,12 @@ df = pd.DataFrame({
 })
 df.loc[df.origin == "SFO", "distance"] = None  # all-NULL group -> U-19
 t = ibis.memtable(df).mutate(dep_date=ibis._.dep_date.cast("date"))
-MODEL = bsl.from_yaml(str(HERE / "flights.yml"), tables={"flights_tbl": t})["flights"]
+airports = ibis.memtable(pd.DataFrame({"code": ["JFK", "LAX", "ORD", "SFO"], "city": ["New York", "Los Angeles", "Chicago", "San Francisco"],
+                                       "country": ["United States"] * 4, "state": ["New York", "California", "Illinois", "California"]}))
+MODEL = bsl.from_yaml(str(HERE / "flights.yml"), tables={"flights_tbl": t, "airports_tbl": airports})["flights"]
+short = lambda name: name[8:] if name.startswith("flights.") else name  # own-model names stay plain
+DS_ID = lambda name: short(name).replace(".", "__")  # LS-02: join dims are "airports.city" in BSL, ids must be [A-Za-z0-9_]
+BSL_NAME = {}
 VERSION = "proto-" + time.strftime("%Y%m%d")
 
 # --- classifier (section 7.2) ---------------------------------------------
@@ -51,11 +56,14 @@ def field(id, name, kind, dtype, agg=None, formula=None, hidden=False, desc="", 
 def build_schema():
     fields, measure_map, raw_dims = [], {}, {}
     for name, d in MODEL.get_dimensions().items():
+        BSL_NAME[DS_ID(name)] = short(name); name = short(name)
         if d.is_time_dimension:
-            fields.append(field(name, name, "DIMENSION", "STRING", semantic="YEAR_MONTH_DAY", desc=d.description or ""))
+            fields.append(field(DS_ID(name), name, "DIMENSION", "STRING", semantic="YEAR_MONTH_DAY", desc=d.description or ""))
         else:
-            fields.append(field(name, name, "DIMENSION", "STRING", desc=d.description or ""))
+            fields.append(field(DS_ID(name), name, "DIMENSION", "STRING", desc=d.description or ""))
     for name, m in MODEL.get_measures().items():
+        if "." in short(name): continue  # measures of joined models are out of scope
+        name = short(name)
         node = resolve(m.expr, t).op()
         kind = type(node).__name__
         meta = ls_meta(m)
@@ -88,6 +96,11 @@ def build_schema():
                 measure_map[f"{name}__bsl"] = name
         # Median etc.: excluded (no allow_raw_mode in this prototype)
     for name, c in MODEL.get_calculated_measures().items():
+        name = short(name)
+        if ls_meta(c).get("compute") == "bsl":
+            fields.append(field(name, name, "METRIC", "NUMBER", desc=(c.description or "") + " (fixed grain)", reagg=False, semantic=ls_meta(c).get("semantic_type")))
+            measure_map[name] = name
+            continue
         deps, safe = classify_calc(c.expr)
         if safe and all(d in {f["id"] for f in fields} for d in deps):
             formula = c.expr  # re-render with $ refs via recording scope
@@ -95,7 +108,7 @@ def build_schema():
     return fields, measure_map, raw_dims
 
 SAFE = (ops.Field, ops.Add, ops.Subtract, ops.Multiply, ops.Divide, ops.Literal, ops.Negate, ops.Cast, ops.UnboundTable)
-vt = ibis.table({k: "float64" for k in [*MODEL.get_measures(), *MODEL.get_calculated_measures()]}, name="agg")
+vt = ibis.table({k: "float64" for n in [*MODEL.get_measures(), *MODEL.get_calculated_measures()] for k in (n, short(n))}, name="agg")
 
 class RecordingScope:
     def __init__(self): self.used_all = False
@@ -118,6 +131,7 @@ class F:
     __add__ = lambda s, o: s._op("+", o); __sub__ = lambda s, o: s._op("-", o)
     __mul__ = lambda s, o: s._op("*", o); __truediv__ = lambda s, o: s._op("/", o)
     __radd__ = lambda s, o: s._op("+", o, True); __rmul__ = lambda s, o: s._op("*", o, True)
+    __rsub__ = lambda s, o: s._op("-", o, True); __rtruediv__ = lambda s, o: s._op("/", o, True)
 def render_calc(fn): return fn(FormulaScope()).s
 
 SCHEMA, MEASURE_MAP, RAW_DIMS = build_schema()
@@ -151,7 +165,7 @@ async def data(req: Request):
     (FIX / f"{int(time.time()*1000)}.json").write_text(json.dumps(body, indent=1))
     ids = [f["name"] for f in body["fields"]]
     dims = [i for i in ids if BY_ID[i]["type"] == "DIMENSION"]
-    bsl_dims = list(dict.fromkeys(RAW_DIMS.get(i, i) for i in dims))  # x and x__value share one column
+    bsl_dims = list(dict.fromkeys(RAW_DIMS.get(i, BSL_NAME.get(i, i)) for i in dims))  # x and x__value share one column
     metrics = [i for i in ids if BY_ID[i]["type"] == "METRIC"]
     m = MODEL
     extra = {}
@@ -176,8 +190,8 @@ async def data(req: Request):
     for _, r in res.iterrows():
         vals = []
         for i in ids:
-            col = RAW_DIMS.get(i, i) if BY_ID[i]["type"] == "DIMENSION" else (MEASURE_MAP[i] if isinstance(MEASURE_MAP[i], str) else MEASURE_MAP[i][0])
-            v = r[col]
+            col = RAW_DIMS.get(i, BSL_NAME.get(i, i)) if BY_ID[i]["type"] == "DIMENSION" else (MEASURE_MAP[i] if isinstance(MEASURE_MAP[i], str) else MEASURE_MAP[i][0])
+            v = r[col] if col in r.index else r[col.replace(".", "_")]
             if v is None or (isinstance(v, float) and np.isnan(v)): vals.append(None)
             elif i == "dep_date": vals.append(pd.Timestamp(v).strftime("%Y%m%d"))
             elif BY_ID[i]["type"] == "METRIC": vals.append(float(v))
