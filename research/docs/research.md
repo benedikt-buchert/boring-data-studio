@@ -130,7 +130,30 @@ sequenceDiagram
 
 ### 4.3 Reuse of the BSL server
 
-BSL 0.3.19 contains a FastAPI server (BSL-06). It has model loading, model schema routes, a query route and an authentication hook. The project must decide if it extends this server or only reuses its parts. The recommendation is to add the Data Studio routes to the app that `create_app` returns. This reuses the model loading and the authentication hook. Status: open item O-01.
+BSL 0.3.19 contains a FastAPI server (BSL-06). It has model loading, model schema routes, a query route and an authentication hook. The first recommendation was to add the Data Studio routes to the app that `create_app` returns. **Decided 2026-11-15 (O-01):** the project does not host its routes in that app. It is a separate package that uses BSL as a library (section 4.3.1).
+
+### 4.3.1 Decision on the BSL server (2026-11-15)
+
+Result of a grilling session on O-01. Facts from `server/api.py` and `server/loader.py` of BSL 0.3.19:
+
+- `create_app` accepts one `auth_hook` of type `Request -> bool` (or `api_key`, not both). A middleware calls it for every path except `/health` and `OPTIONS`. It cannot return a principal.
+- The app always has the routes `/query` (up to 100,000 rows), `/compare-periods`, `/models/{name}/schema` and `/models/{name}/dimensions/{dim}/values` (up to 1,000 values). No setting removes them.
+- App-wide exception handlers change every `ValueError` to 400 and every other exception to 500 `Internal server error`.
+- BSL has no plugin point for the server. Its only entry points are the `bsl` CLI and a xorq tag handler. `bsl serve` calls `create_app` directly.
+- `load_models` reads a Python file (`BSL_CONFIG_PATH`, default `semantic_config.py`) that defines a mapping `MODELS`.
+
+| ID | Decision |
+|---|---|
+| AD-14 | The Data Studio routes are not hosted in the app of `create_app`. Reasons: its extra routes give each accepted viewer full query access past our limits (AD-10, AD-11, R-01); one bool hook cannot give a principal or run several authenticators (AD-01, AD-05); its app-wide handlers hide the typed errors that the connector needs. This replaces the first recommendation of section 4.3. |
+| AD-15 | The API is an installable Python package that depends on BSL. It has two layers: a mountable FastAPI `APIRouter`, and a minimal standalone app with only `/health` and the Data Studio routes. Production and the Docker image (D-03) use the standalone app. Mounting the router into a BSL app is possible but not recommended (AD-10). |
+| AD-16 | The API loads models with BSL `load_models` (`BSL_CONFIG_PATH`, `MODELS` mapping). YAML stays the authoring format and is loaded inside the config file. One model repository serves `bsl serve` and this API. |
+| AD-17 | The API pins `boring-semantic-layer==0.3.19`. A version change is intentional and must pass `make check` and the spikes as contract tests. `docs/bsl-gotchas.md` lists the BSL internals that the API uses. |
+| AD-18 | Names: distribution `boring-data-studio`, import `boring_data_studio`, one CLI `bsl-datastudio` with the commands `serve` and `new-key` (replaces `bsl-api` in AD-09). `requires-python >=3.12`. The package depends on `fastapi` directly, not on `boring-semantic-layer[server]`; only the mounted mode needs that extra. |
+| AD-19 | The router enforces the authenticators (AD-05) as a router-level FastAPI dependency in every host. The principal comes from this dependency. In a BSL host, the BSL `auth_hook` is only an additional outer gate. |
+| AD-20 | The router registers no app-wide exception handlers. Each route catches its errors and returns the typed error body of the API contract (user error or system error). |
+| AD-21 | The router uses relative paths (for example `/schema`, `/data`). The host sets the prefix: the standalone app mounts at the root. The connector API URL includes the prefix. Path versioning is part of the API contract (section 13.1). |
+| AD-22 | Internal stage (D-04): install from a git tag (`uv add "git+https://…@<tag>#subdirectory=api"`) and from the Docker image. Publication on PyPI starts when the project becomes open source. |
+| AD-23 | Repository layout: `api/` (uv project, src layout `api/src/boring_data_studio/`, `api/tests/`) and `connector/`. `prototype/` stays frozen as evidence. `make check` moves to `api/` when the package passes the schema self-check and the fixture replay. |
 
 ## 5. Evidence: Data Studio connector contract
 
@@ -529,7 +552,7 @@ No documented Google API runs a report or returns chart data. The Data Studio AP
 | Direct link with `connectorConfig` | Open a test data source with a fixed configuration in one click. Use it in the golden fixture procedure. | LS-35 |
 | Linking API | Create the golden fixture report again from a template report. Community connector support needs a check. | LS-37 |
 | Data Studio API | Not useful for tests. Only for asset management in Workspace organizations. | LS-36 |
-| BSL FastAPI server | Base for the API (O-01). | BSL-06 |
+| BSL FastAPI server | Library for the API; its app is not the host (AD-14). | BSL-06 |
 | `clasp run` with a test wrapper | Run `getSchema` and `getData` in the real Apps Script runtime from Node tests (section 14.1, Matomo). | Section 14.1 |
 
 ## 10. Limits and usage impact
@@ -568,7 +591,7 @@ Status of each item: **Derived** (a calculation from the proven values in sectio
 7. **Time.** Each getData request must complete in less than 6 minutes. This includes the warehouse query, the transfer to Apps Script and the parse in Apps Script.
 8. **Cross-filtering.** Cross-filtering is on by default and can add requests (LS-44). Each added request uses quota (item 5).
 9. **Caching.** Data Studio serves repeated queries from memory (LS-29). With owner's credentials, all viewers share this memory. This decreases URL Fetch calls and warehouse queries. With viewer's credentials, each viewer causes their own calls, but each viewer also has their own quota and concurrency. Each viewer must also authorize the connector.
-10. **BSL server limit.** The BSL `/query` route permits at most 100,000 rows (BSL-06). This is less than the getData limit. The Data Studio route must not inherit this limit without a decision (O-01).
+10. **BSL server limit.** The BSL `/query` route permits at most 100,000 rows (BSL-06). This is less than the getData limit. The Data Studio routes do not inherit this limit, because they are not in the BSL app (AD-14).
 
 ### 10.3 Design rules from the limits
 
@@ -661,7 +684,7 @@ Result of a grilling session on O-12. It replaces the key-based plan of D-13.
 | AD-06 | `GoogleIdTokenAuthenticator` (A-3) checks signature (Google certificates, cached), audience (the script's OAuth client ID), expiry and email domain (`ALLOWED_DOMAIN`). A Google group check comes later (needs a Directory lookup). The API needs no Google hosting. |
 | AD-07 | `OidcAuthenticator` (A-5) is generic: issuer, audience and group claim come from configuration. Entra ID is tested first. A public client with PKCE (LS-60) is preferred; if the provider needs a secret, it goes in `ScriptProperties` (LS-57). A leaked secret alone gives no data access. |
 | AD-08 | The API reaches the warehouse with its own cloud identity (IAM role on AWS, Managed Identity on Azure, service account on GCP), read-only on the modelled tables. No cloud credential is in Apps Script (A-6 rejected). |
-| AD-09 | No shared key in the connector. An `ApiKeyAuthenticator` exists only for machine clients (tests, CI, fixture replay) and is off in production by default. Machine keys: format `bsl_<id>_<32 random bytes>` from `bsl-api new-key`; the API holds only SHA-256 hashes (from an environment variable filled by the cloud secret manager), compares in constant time, logs only the key ID, accepts two keys for rotation; manual rotation every 90 days and on leak, with a runbook. |
+| AD-09 | No shared key in the connector. An `ApiKeyAuthenticator` exists only for machine clients (tests, CI, fixture replay) and is off in production by default. Machine keys: format `bsl_<id>_<32 random bytes>` from `bsl-datastudio new-key` (AD-18); the API holds only SHA-256 hashes (from an environment variable filled by the cloud secret manager), compares in constant time, logs only the key ID, accepts two keys for rotation; manual rotation every 90 days and on leak, with a runbook. |
 | AD-10 | Exposure: anyone the API accepts can query every modelled field, not only the fields of one report. Each deployment exposes only the models meant for its reports; no personal or ID dimensions in version 1 models. |
 | AD-11 | The API applies a rate limit per principal. Each deployment sets the warehouse cost cap (for example BigQuery `maximum_bytes_billed`, a Snowflake resource monitor). The row cap and timeout (R-01, R-04) limit one request, not a request loop. |
 | AD-12 | Production code does not write request bodies to disk. Fixture capture (`prototype/api/app.py`, `/data`) is a dev-only switch. |
@@ -725,11 +748,12 @@ These questions are about the internal behavior of Data Studio. No documentation
 
 | ID | Item | Owner |
 |---|---|---|
-| O-01 | Extend the BSL FastAPI app, or build a separate app that only uses BSL as a library (section 4.3). | Team |
+| O-01 | Extend the BSL FastAPI app, or build a separate app that only uses BSL as a library (section 4.3). | **Decided 2026-11-15:** separate installable package with a mountable router and a standalone app (section 4.3.1). |
 | O-02 | Use `PATH_KEY` from version 1 (section 11.2). | **Superseded 2026-11-15** by section 11.3.1: version 1 uses A-3 and A-5. The prototype keeps PATH_KEY (E-43) as evidence only. |
 | O-03 | Detailed design of all parts (section 13.1). | Wayfinder |
 | O-04 | Production cache design, for example Redis (D-19). | Later |
 | O-05 | Evaluate the PostgreSQL-protocol alternative (sections 14.1 and 14.3): expose BSL through the PostgreSQL wire protocol and use the native PostgreSQL connector. This avoids the Apps Script limits, but Data Studio then generates SQL that the API must translate. | Later |
+| O-14 | Propose an upstream plugin point to BSL (for example an entry-point group `boring_semantic_layer.server_routes` that `bsl serve` loads), so that the router can run in `bsl serve`. Not before version 1 works (section 4.3.1). | Later |
 
 ### 13.2 Open items from the prototype retrospective (2026-11-14)
 
