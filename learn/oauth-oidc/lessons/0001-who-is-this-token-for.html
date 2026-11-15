@@ -1,0 +1,126 @@
+<title>Who Is This Token For?</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
+<link rel="stylesheet" href="../assets/style.css">
+
+<main>
+  <nav class="course"><span>OAuth &amp; OIDC · Lesson 1 of 7</span><a href="../reference/tokens-and-roles.html">Cheat sheet: tokens &amp; roles</a></nav>
+
+  <p class="eyebrow">Lesson 1</p>
+  <h1>Who is this token for?</h1>
+  <p class="lede">One question cuts through most auth grillings. For any token on the table, ask: who issued it, whose identity does it carry, and <em>who is allowed to accept it</em>. By the end of this page you can answer all three for every token in the boring-data-studio design.</p>
+
+  <h2>Four roles</h2>
+  <p>OAuth 2.0 names four parties<a class="cite" href="https://www.rfc-editor.org/rfc/rfc6749#section-1.1">RFC 6749 §1.1</a>. Every flow is a conversation between them. Map them to our design once and the rest gets easier.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Role</th><th>Job</th><th>In our design (A-5, Entra)</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Resource owner</strong></td><td>The person whose data or access it is</td><td>The report viewer</td></tr>
+      <tr><td><strong>Client</strong></td><td>The app that wants to call an API</td><td>The connector</td></tr>
+      <tr><td><strong>Authorization server</strong></td><td>Logs the person in and issues tokens</td><td>Entra ID (or Google, Okta)</td></tr>
+      <tr><td><strong>Resource server</strong></td><td>The API that accepts tokens</td><td>The BSL API</td></tr>
+    </tbody>
+  </table></div>
+  <p>Note what is missing: the warehouse. The BSL API calls the warehouse with its <em>own</em> identity. That is a second, separate conversation, and it gets its own lesson.</p>
+
+  <h2>Two tokens, two audiences</h2>
+  <p>OAuth gives the client an <strong>access token</strong>: a key that lets the client call an API. OAuth itself does not even define what an access token looks like; it can be an opaque random string<a class="cite" href="https://www.rfc-editor.org/rfc/rfc6749#section-1.4">RFC 6749 §1.4</a>. When it is a JWT, its audience is the API<a class="cite" href="https://www.rfc-editor.org/rfc/rfc9068#section-2.2">RFC 9068 §2.2</a>.</p>
+  <p>OpenID Connect adds an <strong>ID token</strong> on top: a signed statement telling the client <em>who the user is</em>. Its audience must be the client itself<a class="cite" href="https://openid.net/specs/openid-connect-core-1_0.html#IDToken">OIDC Core §2</a>. It is a login receipt for the app, not a key for an API.</p>
+
+  <pre class="mermaid">
+flowchart LR
+  AS["Authorization server<br/>(Entra, Google)"]
+  C["Client<br/>(connector)"]
+  API["Resource server<br/>(BSL API)"]
+  AS -- "ID token<br/>aud = client" --> C
+  AS -- "access token<br/>aud = API" --> C
+  C -- "sends access token" --> API
+  </pre>
+
+  <div class="rule-box"><strong>The audience rule</strong>An API accepts a token only when the token's <code>aud</code> names that API. A valid signature is not enough. Current OAuth security practice asks for audience-restricted tokens for exactly this reason<a class="cite" href="https://www.rfc-editor.org/rfc/rfc9700#section-4.10.2">RFC 9700 §4.10.2</a>.</div>
+
+  <h2>Read a token in ten seconds</h2>
+  <p>A JWT is three base64 parts: header, payload, signature. The payload holds claims<a class="cite" href="https://www.rfc-editor.org/rfc/rfc7519#section-4.1">RFC 7519 §4.1</a>. Four of them answer our question:</p>
+<pre><code>{
+  <span class="c-iss">"iss"</span>: "https://accounts.google.com",              <span class="muted">// who issued it</span>
+  <span class="c-aud">"aud"</span>: "1234-abc.apps.googleusercontent.com",   <span class="muted">// who may accept it</span>
+  <span class="c-sub">"sub"</span>: "110169484474386276334",                  <span class="muted">// whose identity (stable ID)</span>
+  "email": "viewer@company.com",
+  <span class="c-exp">"exp"</span>: 1763215200                                <span class="muted">// when it stops working</span>
+}</code></pre>
+  <p class="small">An illustrative Google ID token payload, the kind the connector gets from <code>getIdentityToken()</code> in option A-3. Values are made up.</p>
+
+  <h2>Back to the grilling</h2>
+  <p>Now look at the two v1 options again with the audience rule in hand.</p>
+  <ul>
+    <li><strong>A-3</strong> sends a Google <em>ID token</em> to the API. Its <code class="c-aud">aud</code> is the connector's client ID, not the API. We use a login receipt as an API key. It works in v1 because our API accepts exactly one audience: our own connector. In a shared gallery connector, every organisation's API would accept that same audience, so one API could replay the token at another. That is O-13.</li>
+    <li><strong>A-5</strong> gets an <em>access token</em> from Entra with <code class="c-aud">aud</code> set to the BSL API (for example <code>api://bsl</code>). Only the BSL API accepts it. That is the textbook shape.</li>
+  </ul>
+
+  <hr>
+  <h2>Check yourself</h2>
+  <div class="quiz">
+    <div class="q" data-answer="2">
+      <p class="q-prompt">1. Which token exists to tell the app who the user is?</p>
+      <div class="q-opts">
+        <button class="q-opt">Access token from OAuth</button>
+        <button class="q-opt">Refresh token from OAuth</button>
+        <button class="q-opt">ID token from OIDC</button>
+        <button class="q-opt">API key from API</button>
+      </div>
+      <p class="q-explain" hidden>The ID token is OIDC's addition: a signed statement about the user, addressed to the client. Access tokens are for calling APIs.</p>
+    </div>
+    <div class="q" data-answer="1">
+      <p class="q-prompt">2. Your API receives a correctly signed JWT whose <code>aud</code> is some other app's client ID. What should it do?</p>
+      <div class="q-opts">
+        <button class="q-opt">Accept it, signature checks out</button>
+        <button class="q-opt">Reject it, audience is wrong</button>
+        <button class="q-opt">Accept it, issuer is trusted</button>
+        <button class="q-opt">Refresh it, then accept it</button>
+      </div>
+      <p class="q-explain" hidden>The signature only proves who issued it. The audience says who it was meant for. A token for someone else is never yours to accept.</p>
+    </div>
+    <div class="q" data-answer="3">
+      <p class="q-prompt">3. In OAuth terms, which role does the BSL API play?</p>
+      <div class="q-opts">
+        <button class="q-opt">Client (the connector app)</button>
+        <button class="q-opt">Authorization server (Entra, Google)</button>
+        <button class="q-opt">Resource owner (the viewer)</button>
+        <button class="q-opt">Resource server (accepts tokens)</button>
+      </div>
+      <p class="q-explain" hidden>The API holds the protected resource and accepts access tokens. The connector is the client that calls it.</p>
+    </div>
+    <div class="q" data-answer="0">
+      <p class="q-prompt">4. Why can a malicious API replay an A-3 token from a shared gallery connector?</p>
+      <div class="q-opts">
+        <button class="q-opt">All APIs accept one audience</button>
+        <button class="q-opt">Google tokens never expire anyway</button>
+        <button class="q-opt">The signature uses weak keys</button>
+        <button class="q-opt">The email claim is missing</button>
+      </div>
+      <p class="q-explain" hidden>The token's audience is the shared connector. Every API that trusts that audience accepts it, so a token sent to one works at the others until it expires.</p>
+    </div>
+    <div class="q" data-answer="1">
+      <p class="q-prompt">5. Which claim names who issued the token?</p>
+      <div class="q-opts">
+        <button class="q-opt"><code>aud</code></button>
+        <button class="q-opt"><code>iss</code></button>
+        <button class="q-opt"><code>sub</code></button>
+        <button class="q-opt"><code>exp</code></button>
+      </div>
+      <p class="q-explain" hidden><code>iss</code> is the issuer, <code>aud</code> the audience, <code>sub</code> the subject (the user's stable ID), <code>exp</code> the expiry.</p>
+    </div>
+    <p class="quiz-score" hidden></p>
+  </div>
+
+  <h2>Say it without looking</h2>
+  <details class="recall"><summary>Explain OAuth vs OIDC in two sentences.</summary><div>OAuth gives an app an access token so it can call an API on someone's behalf. OIDC adds an ID token that tells the app who the user is.</div></details>
+  <details class="recall"><summary>A colleague says "the token is signed by Google, so the API can trust it." What do you ask?</summary><div>"Who is the audience?" A signed token is only for the party named in <code>aud</code>.</div></details>
+
+  <div class="source"><strong>Read next (15 min):</strong> <a href="https://www.oauth.com/oauth2-servers/definitions/">Aaron Parecki, <em>OAuth 2.0 Simplified</em>: Terminology Reference</a>, then <a href="https://www.oauth.com/oauth2-servers/openid-connect/">the OpenID Connect chapter</a>. Parecki is an editor of the OAuth specs; this is the clearest primary-quality introduction.</div>
+  <p class="ask">Anything unclear? Ask your teacher (Claude) in the chat: for example, "why is an ID token a bad API key if it works?" or "where does the API get Google's keys?"</p>
+  <p class="small">Next: Lesson 2, the authorization code flow and PKCE: how a connector gets an Entra access token without holding a secret.</p>
+</main>
+
+<script src="../assets/quiz.js"></script>

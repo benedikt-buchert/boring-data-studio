@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tokens and Roles</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+  <p class="eyebrow">Cheat sheet</p>
+  <h1>Tokens and roles</h1>
+  <p class="small">From <a href="../lessons/0001-who-is-this-token-for.html">Lesson 1</a>. Grows with each lesson.</p>
+
+  <h2>The question</h2>
+  <div class="rule-box"><strong>For every token</strong>Who issued it (<span class="c-iss">iss</span>)? Whose identity (<span class="c-sub">sub</span>)? Who may accept it (<span class="c-aud">aud</span>)? Until when (<span class="c-exp">exp</span>)?</div>
+
+  <h2>Roles <a class="cite" href="https://www.rfc-editor.org/rfc/rfc6749#section-1.1">RFC 6749 §1.1</a></h2>
+  <div class="table-wrap"><table>
+    <tr><th>Role</th><th>Is</th><th>Example</th></tr>
+    <tr><td>Resource owner</td><td>The person</td><td>Report viewer</td></tr>
+    <tr><td>Client</td><td>The app calling the API</td><td>Connector</td></tr>
+    <tr><td>Authorization server</td><td>Logs in, issues tokens</td><td>Entra, Google, Okta</td></tr>
+    <tr><td>Resource server</td><td>The API accepting tokens</td><td>BSL API</td></tr>
+  </table></div>
+
+  <h2>Tokens</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Token</th><th>From</th><th>Audience</th><th>Purpose</th></tr>
+    <tr><td>Access token</td><td>OAuth</td><td>The API <a class="cite" href="https://www.rfc-editor.org/rfc/rfc9068#section-2.2">RFC 9068</a></td><td>Call an API. Format not fixed by OAuth (opaque or JWT).</td></tr>
+    <tr><td>ID token</td><td>OIDC</td><td>The client <a class="cite" href="https://openid.net/specs/openid-connect-core-1_0.html#IDToken">OIDC §2</a></td><td>Tell the client who the user is. Always a JWT.</td></tr>
+  </table></div>
+
+  <h2>The audience rule <a class="cite" href="https://www.rfc-editor.org/rfc/rfc9700#section-4.10.2">RFC 9700 §4.10.2</a></h2>
+  <p>An API accepts a token only when <code>aud</code> names that API. A valid signature proves the issuer, not the recipient.</p>
+</main>
+</body>
+</html>
