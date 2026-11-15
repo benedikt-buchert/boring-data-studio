@@ -32,7 +32,7 @@ Dump `{page, components: [...].map(e => e.innerText)}` once and verify offline w
 
 ## Timing tests
 - Data Studio waits about 300 s for getData (E-37). To re-test, set `U16_DELAY_MS` in Code.gs; read durations on the Apps Script Executions page (`/executions`), which records start time, duration and status per call.
-- Free serveo sessions expire after about 10 minutes; anything longer needs a stable tunnel (O-08) or must avoid the tunnel (as the U-16 test does).
+- Free serveo sessions expire after about 10 minutes; anything longer needs `make tunnel` (ngrok static domain, O-08) or must avoid the tunnel (as the U-16 test does).
 
 ## PATH_KEY connectors
 - Data Studio shows its own Path / Key form after the script's OAuth consent. Fill the two textboxes (snapshot uids), click `Authorise`; a wrong key shows the alert "Sorry, we submitted your credentials, but the credentials are invalid."

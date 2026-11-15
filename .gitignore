@@ -2,3 +2,4 @@ prototype/api/.venv/
 *.zip
 __pycache__/
 prototype/api/API_KEY
+prototype/api/NGROK_DOMAIN

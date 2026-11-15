@@ -1,0 +1,9 @@
+boring-semantic-layer==0.3.19
+ibis-framework[duckdb]==11.0.0
+duckdb==2.0.0
+fastapi==0.162.7
+httpx
+uvicorn
+pyyaml
+numpy
+pandas
