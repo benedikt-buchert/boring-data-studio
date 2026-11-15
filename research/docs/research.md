@@ -2,7 +2,7 @@
 
 | Item | Value |
 |---|---|
-| Status | Baseline for a new code repository. Research only. Updated 2026-11-14 with evidence from a real Data Studio report (section 7.8). |
+| Status | Baseline for a new code repository. Research only. Updated 2026-11-14 with evidence from a real Data Studio report (section 7.8). Updated 2026-11-15 with the classifier decision (section 7.9). |
 | Date | 2026-11-14 |
 | Writing standard | [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) rules. Technical names (getData, Ibis, Docker) are permitted. |
 | Versions tested | boring-semantic-layer 0.3.19, ibis-framework 11.0.0, duckdb 2.0.0, Python 3.12 |
@@ -338,7 +338,7 @@ Users can still create their own calculated fields in reports. The connector can
 
 ### 7.5 Override metadata
 
-The override key is `metadata.looker_studio` on a dimension or measure (D-11). A model-level key is not possible (BSL-03).
+The override key is `metadata.looker_studio` on a dimension or measure (D-11). A model-level key is not possible (BSL-03). **Version 1 key list: section 7.9** (`allow_raw_mode` is removed).
 
 | Key | Type | Effect |
 |---|---|---|
@@ -444,6 +444,43 @@ The prototype in `prototype/` ran the flights model through a real community con
 | E-29 | Default date range | `dateRange` is the last 28 days without today when the chart uses "Auto". | `1794637700526.json` |
 
 **Corrections to earlier sections.** Section 7.7 said that summary rows are not safe for `compute: bsl` (E-19). This was wrong: the summary row is a separate query (LS-50), so it is safe (E-26). E-19 applies to date-grain changes (E-28) and to mixed requests (E-25).
+
+### 7.9 Decision on classification (2026-11-15)
+
+Result of a grilling session on the classifier (Wayfinder #5). It makes sections 7.2 to 7.7 concrete for version 1. Where this section and sections 7.2 to 7.7 do not agree, this section applies.
+
+**Translation table.** The classifier is data driven. A translation table maps each Ibis node to one of four shapes. Each shape is one code path. A table row only fills in a shape.
+
+| Shape | What the connector generates | Example |
+|---|---|---|
+| `direct` | A metric with its own Data Studio aggregation | `Sum` → `SUM` |
+| `helpers` | A formula over generated BSL helper measures (R-12) | `Mean` → `SUM($h_sum) / SUM($h_count)` |
+| `raw_value` | A formula over a hidden raw dimension, with a row mode (section 7.6) | `CountDistinct` → `COUNT_DISTINCT($x_value)`, grouped |
+| `scalar` | An operation or function on aggregated values inside a calculated measure | `Add` → `+`, later `Abs` → `ABS()` |
+
+A row has these values: Ibis node, shape, formula template, row mode (`raw_value` only), optional `backends` restriction, and evidence ID.
+
+| ID | Decision |
+|---|---|
+| AD-24 | The classifier uses only the translation table. A node that has no row is not decomposable. It is excluded, or it is exposed as fixed grain when `compute: bsl` or `both` asks for it. This also applies to a new node type after a BSL or Ibis upgrade. |
+| AD-25 | The table is a data file in the package. It has two parts: aggregations and scalar operations. The four shapes are the only code paths. A row with an unknown shape stops the start of the API. |
+| AD-26 | Rows in version 1. Aggregations: `Sum`, `Count`, `CountStar`, `Min`, `Max` (`direct`); `Mean` (`helpers`, the count helper counts non-NULL values, E-05); `CountDistinct` (`raw_value`, grouped mode). Scalar: `Add`, `Subtract`, `Multiply`, `Divide`, `Negate`, `Literal`, `Cast`. |
+| AD-27 | A deployment can give its own table file in configuration. The file can add rows and disable rows. An added row can use only a Data Studio function that the simulator implements. A row has no "unverified" mode. |
+| AD-28 | Proof of a row: `make check` generates a property test for each row (E-21 method: DuckDB, random tables with NULLs and duplicates, random grains, the summary row). The test compares the simulator result of the Data Studio formula with BSL. A failed test stops `make check`. A new shape or a new row mode needs a golden fixture from real Data Studio in addition. A new scalar function needs only the property test. |
+| AD-29 | A row can have a `backends` list. On other backends the classifier treats the node as not decomposable. The version 1 rows have no restriction. Use the restriction for rows that differ between backends, for example `PERCENTILE` (quantile method, section 7.6). |
+| AD-30 | Raw mode is not in version 1. `Median`, `Quantile`, `StandardDev` and `Variance` are available only with `compute: bsl` (E-32). The key `allow_raw_mode` is removed. The raw-mode rows of section 7.6 can come back as table rows later. |
+| AD-31 | `ApproxCountDistinct` has no row in version 1. It is available only with `compute: bsl`. The connector does not map it to an exact count, because that changes the meaning of the measure. |
+| AD-32 | Conditional aggregations (Ibis `where=`): `Sum`, `Count`, `Min` and `Max` keep their shape (E-15, E-31). For `Mean`, both helpers get the condition. A conditional `CountDistinct` is not decomposable in version 1 (only `compute: bsl`). |
+| AD-33 | Calculated measures. A calculated measure is a formula only when each operation has a scalar row and each referenced measure is decomposable. The formula expands each reference down to base or helper fields (D-23), for example a reference to a mean becomes `(SUM($h_sum) / SUM($h_count))`. A reference to an excluded or a `bsl`-only measure makes the calculated measure not decomposable. |
+| AD-34 | `compute: auto` excludes each measure that the classifier cannot prove safe (D-05). It never changes to `bsl` by itself. The API writes the reason for each excluded measure to the log. `make check` prints a classification report (field, shape or reason). |
+| AD-35 | Distinct counts are on by default (`auto` gives the `data_studio` field). NULL behavior is equal (E-24). When the rows exceed the cap, the row guard returns an error (R-01). The modeller then sets `compute: both` or `bsl` (R-07). |
+| AD-36 | One-to-many joins (R-13). A measure of the "many" side is decomposable over all dimensions. A measure of the "one" side is classified as "decomposable on its own side". The API rejects a request that contains such a measure together with a dimension or a filter of the many side, with a user error that names the measure and the field (Wayfinder #8). When the primary time dimension (D-15) is on the many side, a one-side measure can never be used, because each request has a date range. Then schema generation fails with an error, unless the measure has `compute: bsl` or `expose: false`. |
+| AD-37 | Measures of joined models use the same rules, including AD-36. They are exposed only when their metadata has `expose: true`. Field ID rules: Wayfinder #6. |
+| AD-38 | Classification runs once when the API loads the models. These conditions stop the start of the API and `make check`: an unknown key under `metadata.looker_studio`, a value of `compute` that is not valid, `compute: both` on a measure without a `data_studio` field, and a generated formula with a `$` reference that is not in the schema (LS-06). |
+
+**Override keys in version 1** (replaces the table of section 7.5): `expose` (default true for fields of the own model, false for measures of joined models), `label`, `group`, `semantic_type`, `compute` (`auto`, `data_studio`, `bsl`, `both`), `primary_time`, `max_rows`. Each other key is an error (AD-38).
+
+**For Wayfinder #6.** Names of helper fields and raw dimensions, and the description text for "decomposable on its own side" (AD-36), are part of the field specification.
 
 ## 8. Request translation
 
