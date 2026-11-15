@@ -74,6 +74,32 @@ sequenceDiagram
   </pre>
   <p class="small">Identity and permission are two steps: the badge says who; IAM decides what. Sources: <a href="https://docs.github.com/en/actions/concepts/security/openid-connect">GitHub Docs</a>, <a href="https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines">Google Cloud docs</a>.</p>
 
+  <h2>Why a token cannot be forged</h2>
+  <pre class="mermaid">
+sequenceDiagram
+    participant IdP as Issuer (Google / Entra)
+    participant C as Connector
+    participant API as BSL API
+    Note over IdP: Keeps PRIVATE key secret
+    IdP-->>C: Token = claims + signature(private key)
+    C->>API: Token
+    API->>IdP: GET /.well-known/openid-configuration → jwks_uri (cached)
+    IdP-->>API: PUBLIC keys (JWKS)
+    API->>API: 1. signature valid with issuer's public key?
+    API->>API: 2. alg on allowlist (never "none")?
+    API->>API: 3. iss = expected issuer? aud = me?
+    API->>API: 4. exp not passed?
+  </pre>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Token kind</th><th>Why forging fails</th></tr></thead>
+    <tbody>
+      <tr><td>Signed JWT (ID token, Entra access token)</td><td>Only the issuer has the private key. Any changed byte breaks the signature.</td></tr>
+      <tr><td>Opaque token</td><td>Random; the API asks the issuer about it (introspection, RFC 7662).</td></tr>
+      <tr><td>Machine API key</td><td>32 random bytes; guessing is not feasible. API keeps only hashes.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="rule-box"><strong>Forged vs stolen</strong>Signatures stop forging. They do not stop a stolen real token from working. Against theft: short <code>exp</code>, the right <code>aud</code>, HTTPS only, and sender-constrained tokens (DPoP, mTLS).</div>
+
   <h2>Other pieces</h2>
   <div class="table-wrap"><table>
     <tbody>
