@@ -663,7 +663,7 @@ Result of a grilling session on O-12. It replaces the key-based plan of D-13.
 
 **Rejected or deferred.** A-8 and A-2 as the user-facing method: a shared key gives full read access to all modelled data to anyone who has it, and with A-8 to anyone who can use the connector. Automated key rotation: Google has no API to set `ScriptProperties` from outside; self-rotation needs a writable key store and does not stop a thief who holds the current key. Native BigQuery service-account credentials do not apply (LS-58).
 
-**Gallery stage.** A-3 also works for a published connector: the API URL goes in the data source configuration and the API decides who may query. This removes the PATH_KEY problem of section 11.2 item 1 for stage C.
+**Gallery stage.** A-3 is safe in version 1 because the API URL is fixed. In a published connector it is not safe without changes: `getIdentityToken()` always has the audience of the one shared script, so every organisation's API must accept the same audience. A malicious API URL in a data source receives the viewer's token and can replay it for about one hour at the viewer's own organisation's API. Open item O-13.
 
 **Additional required tests.**
 
@@ -738,6 +738,7 @@ Decisions the team must take before connector development starts. Evidence: `pro
 | O-10 | The Serena MCP instruction is loaded every session and was not used in the prototype. | **Done 2026-11-14:** disabled for this repository (`disabledMcpServers: ["serena"]` in the project entry of `~/.claude.json`; re-enable with `/mcp`). | Team |
 | O-11 | No CI. `make check` (schema self-check + replay of all golden fixtures in-process) is the candidate gate. `prototype/verify_dashboard.py` stays manual because it needs a browser dump. | Add CI with `make check` when the repository is created. | Wayfinder |
 | O-12 | Choose the authentication method for version 1: A-2 (`PATH_KEY`, verified) or A-3 (Google identity token, recommended for Workspace, needs T-1). Choose owner's or viewer's credentials together with it. | **Decided 2026-11-15:** A-3 then A-5, viewer's credentials (section 11.3.1). | Team |
+| O-13 | Token replay in the gallery stage (section 11.3.1): A-3 tokens of a shared connector are valid at every API that trusts its audience. | Each organisation deploys its own connector copy (own audience, no gallery); A-5 in the gallery (audience per identity provider; unverified that a gallery connector can take provider settings from the data source configuration); URL allowlist (conflicts with user-supplied URLs, LS-27). | Team, before stage C |
 
 ### 13.1 Handover to Wayfinder
 
