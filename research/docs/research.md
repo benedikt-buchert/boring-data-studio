@@ -56,7 +56,7 @@ These decisions set the direction for the detailed design. They are inputs for W
 | D-10 | The connector derives the treatment of each measure from the BSL expression (section 6). |
 | D-11 | Per-field overrides live in BSL `metadata` under the key `looker_studio`. |
 | D-12 | The Docker image contains the models. The build records the git SHA and tag in the image. |
-| D-13 | Version 1 uses key authentication. The authentication layer is pluggable. Row-level security is not in scope for version 1. The options and the recommendation are in section 11.3. |
+| D-13 | Version 1 identifies each user: Google identity token (A-3) first, then OAuth2 with the organisation's identity provider (A-5). No shared key in the connector. The authentication layer is pluggable. Row-level security is not in scope for version 1. Decision record: section 11.3.1. |
 | D-14 | One Data Studio data source maps to one BSL model, including its joins. |
 | D-15 | Each model exposes one primary time dimension at day grain. The connector sets `dateRangeRequired` to true. |
 | D-16 | The simulator covers the table body, the summary row, the scorecard, dimension filters, the date range and date-grain bucketing. Blends, comparison periods and report-level calculated fields are not in scope. |
@@ -205,6 +205,13 @@ Primary sources:
 | LS-55 | `ScriptApp.getOAuthToken()` returns the effective user's OAuth access token for the script's scopes. A receiver can check it with Google's token-info endpoint. | [ScriptApp.getOAuthToken](https://developers.google.com/apps-script/reference/script/script-app#getOAuthToken()) | Doc |
 | LS-56 | Cloud Run can require IAM authentication (`roles/run.invoker`) and accepts ID tokens whose audience is the service URL or a configured custom audience. | [Cloud Run authentication](https://cloud.google.com/run/docs/authenticating/overview); [Custom audiences](https://cloud.google.com/run/docs/configuring/custom-audiences) | Doc |
 | LS-57 | Apps Script `UserProperties` are visible only to the user who stored them; `ScriptProperties` are shared by all users and editors of the script. | [Properties service](https://developers.google.com/apps-script/guides/properties) | Doc |
+| LS-58 | Data Studio "Service Account Credentials" work only for BigQuery data sources. They need a Google Workspace or Cloud Identity organisation. An admin grants the Data Studio service agent `roles/iam.serviceAccountTokenCreator` on a Google Cloud service account. The service account gets read access to the tables. Data source editors need `roles/iam.serviceAccountUser`. Viewers need no permissions. The pages do not mention community connectors. | [Data credentials](https://docs.cloud.google.com/looker/docs/studio/data-credentials-article); [Set up a service account](https://docs.cloud.google.com/looker/docs/studio/set-up-a-google-cloud-service-account-for-looker-studio) | Doc |
+| LS-59 | For community connectors, Google documents a different service-account pattern: `getAuthType` returns `NONE`, the service-account credentials are stored in `ScriptProperties`, and `getData` creates a token with `apps-script-oauth2`. The example is BigQuery-specific, but the pattern applies to any platform. Google says script properties hide the credentials from code viewers. Per LS-57, they are still readable by script editors. | [Use a service account](https://developers.google.com/looker-studio/connector/use-a-service-account) | Doc |
+| LS-60 | The `apps-script-oauth2` library supports PKCE: `generateCodeVerifier()`, `setCodeVerififer()` (sic) and a code challenge method, in `src/Service.js`. The README does not document it. | [apps-script-oauth2 `src/Service.js`](https://github.com/googleworkspace/apps-script-oauth2/blob/main/src/Service.js) | Code |
+| LS-61 | The audience (`aud`) of a `getIdentityToken()` token is the script's OAuth client ID. The guide gives no way to set a different audience in the script; the receiving service must allow that client ID. Community reports describe audience mismatches, so T-1 must log `aud`. | [Connect to Google Cloud services](https://developers.google.com/apps-script/guides/services/cloud-run); [ScriptApp](https://developers.google.com/apps-script/reference/script/script-app) | Doc |
+| LS-62 | For `OAUTH2`, the documented OAuth service (authorize URL, token URL, client ID, secret) is set in the script code. The connector "should not rely on connector configuration" to obtain credentials. | [Connector auth](https://developers.google.com/looker-studio/connector/auth) | Doc |
+| LS-63 | The published Matomo connector uses auth type `USER_TOKEN`: the "username" field holds the Matomo instance URL, the token is the user's personal Matomo auth token. `setCredentials` validates both with an API call and stores them in `UserProperties`. Identity and permissions come from Matomo's own user system. The manifest has no `urlFetchWhitelist`. | [`src/auth.ts`, `src/appsscript.json`](https://github.com/matomo-org/looker-studio-connector) (read 2026-11-15) | Code |
+| LS-64 | The dbt Semantic Layer connector reads its auth token from `request.configParams` (data source configuration), not from an auth type. The Cube connector uses `OAUTH2`. | [anouardbt/dbt-sl-looker-studio `src/Code.gs`](https://github.com/anouardbt/dbt-sl-looker-studio); [chaos87/datastudio_cube_connector `Code.gs`](https://github.com/chaos87/datastudio_cube_connector) | Code |
 
 ## 6. Evidence: Boring Semantic Layer
 
@@ -609,6 +616,8 @@ D-13 asks for a pluggable authentication layer. The prototype verified `PATH_KEY
 
 **Constraint for every option: the effective user.** The connector runs as the data source owner (owner's credentials) or as each report viewer (viewer's credentials, `forceViewersCredentials`, LS-32). An option that identifies a user identifies only the owner unless viewer's credentials are forced. Viewer's credentials also give each viewer their own Apps Script quota and concurrency (R-05, R-14), but each viewer must authorise the connector once.
 
+**Native BigQuery service accounts do not apply.** The "assign a service account" option of the native BigQuery connector works only for BigQuery data sources (LS-58). A community connector reaches the API only with what its own code sends. The closest documented pattern for community connectors is a technical credential in `ScriptProperties` with auth type `NONE` (LS-59). A-6 is that pattern with a cloud key, and A-8 is that pattern with an API key.
+
 **Constraint for every option: distribution.** A Partner Connector needs OAuth client verification for every auth type (LS-27).
 
 | ID | Option | Mechanism | Identity at the API | Secret to manage | Strengths | Weaknesses | Status |
@@ -620,6 +629,8 @@ D-13 asks for a pluggable authentication layer. The prototype verified `PATH_KEY
 | A-5 | `OAUTH2` with a third-party identity provider | User signs in to the organisation's IdP (Okta, Entra, Google) via `apps-script-oauth2`; connector sends the access token (LS-53) | IdP identity with scopes | OAuth client secret in the script; refresh-token handling | Standard, revocable, scoped, per-user tokens; works with any IdP | Most build effort (client registration, callback, refresh); client secret in `ScriptProperties` is visible to script editors (LS-57) | Doc, not tested |
 | A-6 | Service-account key in the connector | Connector holds a service-account key and mints tokens, for example for an IAM-protected Cloud Run service (LS-56) | The service account, not the user | Long-lived private key in `ScriptProperties`, readable by every script editor (LS-57) | Keeps the API private behind Cloud Run IAM | Shared long-lived secret with high privilege; no user identity; key rotation is manual | Doc, **not recommended** |
 | A-7 | Cloud Run IAM with A-3 tokens | Cloud Run custom audience set to the script's OAuth client ID; viewers' Google group gets `roles/run.invoker` (LS-56) | Google email, checked by Cloud Run before the API runs | None | API needs no token code; unauthenticated traffic never reaches the container | Only for APIs on Cloud Run; whether Apps Script identity tokens pass Cloud Run's audience check is unverified | Doc, not tested (T-2) |
+| A-8 | Shared API key in `ScriptProperties`, auth type `NONE` | The deployer stores the API URL and key in `ScriptProperties` once per connector deployment; the connector sends the key as a header (LS-59 pattern) | None (shared key) | Static key per deployment, readable by script editors (LS-57) | Report owners and viewers enter nothing; no cloud credential in Apps Script; works on any cloud | One connector deployment per API (conflicts with O-02 for open source); rotation needs a script-property change by an editor | Doc |
+| A-9 | Personal API token issued by the API (Matomo pattern, LS-63) | The user signs in to a token page of the API with the organisation's identity provider (OIDC, on the API side) and gets a personal, revocable token. The connector uses `PATH_KEY` or `USER_TOKEN`: API URL and personal token in `UserProperties` | The user who owns the token | Per-user tokens, stored as hashes in the API; revocation per user | One gallery connector serves every organisation; the identity provider is configured on the API, not in the script (avoids LS-62); a token works only at the API that issued it (no replay as in O-13) | The API needs a token page, a token store and an OIDC login; every viewer needs a token with viewer's credentials; a token is a long-lived secret that a user can paste into a wrong URL | Doc (pattern) |
 
 **Recommendation.**
 
@@ -635,6 +646,37 @@ D-13 asks for a pluggable authentication layer. The prototype verified `PATH_KEY
 | T-1 | Connector sends `getIdentityToken()`; API verifies it with `google-auth` (`id_token.verify_oauth2_token`), checks audience and domain; test with owner's and with viewer's credentials. | Whether A-3 works in Data Studio and which email the API sees in each credentials mode |
 | T-2 | Deploy the API to Cloud Run with IAM required and the script's OAuth client ID as custom audience. | Whether A-7 removes token code from the API |
 | T-3 | Measure the extra latency of token creation in Apps Script and of verification in the API (certificate cache warm and cold). | Cost of A-3 per getData (compare E-40 overhead) |
+
+### 11.3.1 Decision for version 1 (2026-11-15)
+
+Result of a grilling session on O-12. It replaces the key-based plan of D-13.
+
+| ID | Decision |
+|---|---|
+| AD-01 | The API identifies each user. There are no per-user data permissions in version 1, but each request has a principal (the user's email). The API passes it to the BSL `auth_hook`. |
+| AD-02 | Two connector deployments from the same code, because a deployment has one auth type. Deployment G uses A-3: auth type `NONE`, `ScriptApp.getIdentityToken()` sent as `Authorization: Bearer`. Deployment O uses A-5: auth type `OAUTH2` with the organisation's identity provider. |
+| AD-03 | Order: T-1, then A-3, then A-5. Both are in version 1. |
+| AD-04 | Viewer's credentials (`forceViewersCredentials`). Each viewer authorises the connector once (Google consent; for A-5 also the identity-provider login). Each viewer gets their own Apps Script quota (R-05, R-14). |
+| AD-05 | The API has an `Authenticator` interface. Each implementation takes the request and returns a principal or rejects the request. Configuration selects the active authenticators. The connector builds auth headers in one function. A new method is a new authenticator and, where needed, a new connector deployment. |
+| AD-06 | `GoogleIdTokenAuthenticator` (A-3) checks signature (Google certificates, cached), audience (the script's OAuth client ID), expiry and email domain (`ALLOWED_DOMAIN`). A Google group check comes later (needs a Directory lookup). The API needs no Google hosting. |
+| AD-07 | `OidcAuthenticator` (A-5) is generic: issuer, audience and group claim come from configuration. Entra ID is tested first. A public client with PKCE (LS-60) is preferred; if the provider needs a secret, it goes in `ScriptProperties` (LS-57). A leaked secret alone gives no data access. |
+| AD-08 | The API reaches the warehouse with its own cloud identity (IAM role on AWS, Managed Identity on Azure, service account on GCP), read-only on the modelled tables. No cloud credential is in Apps Script (A-6 rejected). |
+| AD-09 | No shared key in the connector. An `ApiKeyAuthenticator` exists only for machine clients (tests, CI, fixture replay) and is off in production by default. Machine keys: format `bsl_<id>_<32 random bytes>` from `bsl-api new-key`; the API holds only SHA-256 hashes (from an environment variable filled by the cloud secret manager), compares in constant time, logs only the key ID, accepts two keys for rotation; manual rotation every 90 days and on leak, with a runbook. |
+| AD-10 | Exposure: anyone the API accepts can query every modelled field, not only the fields of one report. Each deployment exposes only the models meant for its reports; no personal or ID dimensions in version 1 models. |
+| AD-11 | The API applies a rate limit per principal. Each deployment sets the warehouse cost cap (for example BigQuery `maximum_bytes_billed`, a Snowflake resource monitor). The row cap and timeout (R-01, R-04) limit one request, not a request loop. |
+| AD-12 | Production code does not write request bodies to disk. Fixture capture (`prototype/api/app.py`, `/data`) is a dev-only switch. |
+| AD-13 | Gallery stage target: A-9 (personal API tokens issued by each organisation's API after an OIDC login on the API side, LS-63). It needs a writable token store, a token page and one more `Authenticator`. Version 1 does not change for it. |
+
+**Rejected or deferred.** A-8 and A-2 as the user-facing method: a shared key gives full read access to all modelled data to anyone who has it, and with A-8 to anyone who can use the connector. Automated key rotation: Google has no API to set `ScriptProperties` from outside; self-rotation needs a writable key store and does not stop a thief who holds the current key. Native BigQuery service-account credentials do not apply (LS-58).
+
+**Gallery stage.** A-3 is safe in version 1 because the API URL is fixed. In a published connector it is not safe without changes: `getIdentityToken()` always has the audience of the one shared script, so every organisation's API must accept the same audience. A malicious API URL in a data source receives the viewer's token and can replay it for about one hour at the viewer's own organisation's API. Open item O-13.
+
+**Additional required tests.**
+
+| ID | Test | Decides |
+|---|---|---|
+| T-5 | Deployment O with Entra ID and viewer's credentials: login, token refresh, API verification of issuer, audience and group claim. | Whether A-5 works in Data Studio |
+| T-6 | Entra public client with PKCE from Apps Script, without a client secret. | Whether AD-07 needs a secret in `ScriptProperties` |
 
 ## 12. Unverified claims: required tests
 
@@ -684,7 +726,7 @@ These questions are about the internal behavior of Data Studio. No documentation
 | ID | Item | Owner |
 |---|---|---|
 | O-01 | Extend the BSL FastAPI app, or build a separate app that only uses BSL as a library (section 4.3). | Team |
-| O-02 | Use `PATH_KEY` from version 1 (section 11.2). | Team — **adopted in the prototype (E-43)**: the main connector uses PATH_KEY. Open: key distribution (R-16) |
+| O-02 | Use `PATH_KEY` from version 1 (section 11.2). | **Superseded 2026-11-15** by section 11.3.1: version 1 uses A-3 and A-5. The prototype keeps PATH_KEY (E-43) as evidence only. |
 | O-03 | Detailed design of all parts (section 13.1). | Wayfinder |
 | O-04 | Production cache design, for example Redis (D-19). | Later |
 | O-05 | Evaluate the PostgreSQL-protocol alternative (sections 14.1 and 14.3): expose BSL through the PostgreSQL wire protocol and use the native PostgreSQL connector. This avoids the Apps Script limits, but Data Studio then generates SQL that the API must translate. | Later |
@@ -701,7 +743,8 @@ Decisions the team must take before connector development starts. Evidence: `pro
 | O-09 | This document exceeds the agent read limit (740 lines) and must be paged. | Move the evidence tables (sections 5 to 7) to `research/docs/evidence.md` with a pointer, or keep as is. | Team |
 | O-10 | The Serena MCP instruction is loaded every session and was not used in the prototype. | **Done 2026-11-14:** disabled for this repository (`disabledMcpServers: ["serena"]` in the project entry of `~/.claude.json`; re-enable with `/mcp`). | Team |
 | O-11 | No CI. `make check` (schema self-check + replay of all golden fixtures in-process) is the candidate gate. `prototype/verify_dashboard.py` stays manual because it needs a browser dump. | Add CI with `make check` when the repository is created. | Wayfinder |
-| O-12 | Choose the authentication method for version 1: A-2 (`PATH_KEY`, verified) or A-3 (Google identity token, recommended for Workspace, needs T-1). Choose owner's or viewer's credentials together with it. | Options and tests: section 11.3. | Team |
+| O-12 | Choose the authentication method for version 1: A-2 (`PATH_KEY`, verified) or A-3 (Google identity token, recommended for Workspace, needs T-1). Choose owner's or viewer's credentials together with it. | **Decided 2026-11-15:** A-3 then A-5, viewer's credentials (section 11.3.1). | Team |
+| O-13 | Token replay in the gallery stage (section 11.3.1): A-3 tokens of a shared connector are valid at every API that trusts its audience (LS-61). | Docs check 2026-11-15: an identity provider per organisation in one gallery connector is not supported as documented (LS-62). For several organisations with their own permissions, each organisation deploys its own connector copy (own audience, own IdP settings). A gallery listing fits only one shared identity provider or a shared-key method. Gallery connectors studied (LS-63, LS-64) solve shared auth with per-user tokens from the backend: candidate A-9. **Decided 2026-11-15:** A-9 is the target design for the gallery stage; version 1 stays A-3 then A-5 (section 11.3.1). A-9 is one more `Authenticator` (AD-05). | Team |
 
 ### 13.1 Handover to Wayfinder
 

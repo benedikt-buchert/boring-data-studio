@@ -1,0 +1,84 @@
+<title>OAuth and OIDC Here</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
+<link rel="stylesheet" href="../assets/style.css">
+
+<main>
+  <p class="eyebrow">Cheat sheet · boring-data-studio</p>
+  <h1>OAuth and OIDC in this repo</h1>
+  <p class="lede">Three connections. Each one uses OAuth, OIDC, or neither. Key card = access token (OAuth). Badge = ID token (OIDC).</p>
+
+  <h2>The three connections</h2>
+  <pre class="mermaid">
+flowchart LR
+  V["Viewer"] -- "① OAuth<br/>(Google consent)" --> C["Connector<br/>(Apps Script)"]
+  C -- "② A-3: OIDC badge<br/>② A-5: OAuth key card" --> API["BSL API"]
+  API -- "③ neither<br/>(cloud identity)" --> W["Warehouse"]
+  </pre>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Connection</th><th>Uses</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td>① Viewer → connector</td><td>OAuth</td><td>Viewer allows the script limited access on Google's consent screen.</td></tr>
+      <tr><td>② Connector → API (A-3)</td><td>OIDC</td><td>Google's badge for the connector is shown at the API. The shortcut.</td></tr>
+      <tr><td>② Connector → API (A-5)</td><td>OAuth + OIDC login</td><td>Entra checks the person, then issues a key card made for the BSL API.</td></tr>
+      <tr><td>③ API → warehouse</td><td>Neither</td><td>The API logs in as itself: IAM role, Managed Identity or service account.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>A-3: the badge as a key</h2>
+  <pre class="mermaid">
+sequenceDiagram
+    actor V as Viewer
+    participant G as Google
+    participant C as Connector
+    participant API as BSL API
+    V->>G: Consent once (scopes incl. openid)
+    C->>G: getIdentityToken()
+    G-->>C: Badge: viewer@company.com, aud = connector
+    C->>API: POST /data + badge
+    API->>API: Signed by Google? aud = our connector? domain allowed?
+    API-->>C: Data
+  </pre>
+  <p class="small">Works in v1 because only our connector exists. In a shared gallery connector every API trusts the same audience, so a badge can be replayed (O-13).</p>
+
+  <h2>A-5: a key card for the API</h2>
+  <pre class="mermaid">
+sequenceDiagram
+    actor V as Viewer
+    participant C as Connector
+    participant E as Entra ID
+    participant API as BSL API
+    C->>E: Send viewer to login (code flow + PKCE)
+    V->>E: Log in (OIDC: who is this?)
+    E-->>C: Key card: aud = api://bsl, user claims inside
+    C->>API: POST /data + key card
+    API->>API: Issued by Entra? aud = me? read user claims
+    API-->>C: Data
+  </pre>
+  <div class="rule-box"><strong>Same card, different reader</strong>The connector carries the access token but does not read it. The API is the card's intended reader (its audience), so it may read the user claims inside.</div>
+
+  <h2>③ and CI: machines with identities</h2>
+  <pre class="mermaid">
+sequenceDiagram
+    participant J as GitHub Actions job
+    participant GH as GitHub OIDC provider
+    participant STS as Google Workload Identity Federation
+    participant GCP as Google Cloud API
+    J->>GH: Ask for an ID token
+    GH-->>J: Badge: sub = repo:my-org/my-repo:ref:refs/heads/main
+    J->>STS: Swap badge for a key card
+    STS->>STS: Rule: repo == my-org/my-repo? (identity)
+    STS-->>J: Short-lived Google access token
+    J->>GCP: Deploy with the key card
+    GCP->>GCP: IAM: may this identity deploy? (permission)
+  </pre>
+  <p class="small">Identity and permission are two steps: the badge says who; IAM decides what. Sources: <a href="https://docs.github.com/en/actions/concepts/security/openid-connect">GitHub Docs</a>, <a href="https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines">Google Cloud docs</a>.</p>
+
+  <h2>Other pieces</h2>
+  <div class="table-wrap"><table>
+    <tbody>
+      <tr><td>Machine API keys</td><td>Neither. A plain shared secret for tests, CI and replay.</td></tr>
+      <tr><td>A-9 (gallery)</td><td>OIDC once on the API's token page, then the API's own personal token (neither).</td></tr>
+    </tbody>
+  </table></div>
+</main>

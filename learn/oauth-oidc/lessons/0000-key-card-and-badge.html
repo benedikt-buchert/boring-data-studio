@@ -1,0 +1,139 @@
+<title>Key Card and Badge</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
+<link rel="stylesheet" href="../assets/style.css">
+
+<main>
+  <nav class="course"><span>OAuth &amp; OIDC · Lesson 0</span><a href="0001-who-is-this-token-for.html">Next: Lesson 1, who is this token for?</a></nav>
+
+  <p class="eyebrow">Lesson 0 · Foundations</p>
+  <h1>Key card and badge</h1>
+  <p class="lede">OAuth and OIDC solve two different problems. OAuth lets an app <em>use</em> something on your behalf. OIDC tells the app <em>who you are</em>. Keep these apart and most auth discussions get simple.</p>
+
+  <h2>The problem: sharing your password</h2>
+  <p>A reporting app wants to read your Google Calendar. Before OAuth, the only way was to give the app your Google password. The OAuth spec lists what goes wrong<a class="cite" href="https://www.rfc-editor.org/rfc/rfc6749#section-1">RFC 6749 §1</a>:</p>
+  <ul>
+    <li>The app stores your password, often in plain text.</li>
+    <li>The app gets <strong>all</strong> your access, for as long as it likes.</li>
+    <li>You cannot take access away from one app without changing your password for every app.</li>
+    <li>If the app is hacked, your password and all your data are gone.</li>
+  </ul>
+
+  <h2>OAuth: a key card instead of a password</h2>
+  <p>Think of a hotel. Reception checks your passport once and gives you a key card. The door does not care who you are. It only checks that the card opens this room, today.</p>
+  <pre class="mermaid">
+flowchart LR
+  P["You<br/>(passport)"] -- "1. show passport,<br/>agree to 'read calendar'" --> R["Reception<br/>(Google, Entra)"]
+  R -- "2. key card<br/>(access token)" --> A["App"]
+  A -- "3. card at the door" --> D["Door<br/>(Calendar API)"]
+  </pre>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Hotel</th><th>OAuth term</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>Reception</td><td>Authorization server</td><td>Checks you and issues cards. You type your password only here.</td></tr>
+      <tr><td>Key card</td><td>Access token</td><td>Opens one kind of door, for a short time, and can be cancelled.</td></tr>
+      <tr><td>Door</td><td>API (resource server)</td><td>Checks the card. Does not need your name.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The app carries the key card but does not read it. The spec says an access token is "usually opaque to the client"<a class="cite" href="https://www.rfc-editor.org/rfc/rfc6749#section-1.4">RFC 6749 §1.4</a>. The app has no reliable way to learn your name from it.</p>
+
+  <div class="rule-box"><strong>Remember</strong>OAuth is about <em>access</em>: may this app do this thing? It is not about <em>who</em> the user is.</div>
+
+  <h2>OIDC: a badge for the app</h2>
+  <p>Apps wanted "Log in with Google". Many misused OAuth for it: "I got a key card, so this must be Anna." That is unsafe, because the key card was never a statement to the app about who the user is<a class="cite" href="https://oauth.net/articles/authentication/">oauth.net: User authentication with OAuth 2.0</a>.</p>
+  <p>OpenID Connect is a thin identity layer on top of OAuth<a class="cite" href="https://openid.net/specs/openid-connect-core-1_0.html#Introduction">OIDC Core §1</a>. Next to the key card, reception now also gives the app a signed <strong>badge</strong>: "This is Anna. Google checked her at 08:48. This badge is for ReportApp." That badge is the <strong>ID token</strong><a class="cite" href="https://openid.net/specs/openid-connect-core-1_0.html#IDToken">OIDC Core §2</a>.</p>
+  <pre class="mermaid">
+sequenceDiagram
+    actor U as You
+    participant App as App
+    participant R as Reception (Google)
+    participant D as Door (API)
+    U->>R: Log in, click "Allow"
+    R-->>App: Key card (access token), for the door
+    R-->>App: Badge (ID token), for the app, OIDC only
+    App->>App: Reads badge: "this is Anna"
+    App->>D: Shows key card
+    D-->>App: Data
+  </pre>
+
+  <div class="table-wrap"><table>
+    <thead><tr><th></th><th>Access token</th><th>ID token</th></tr></thead>
+    <tbody>
+      <tr><td>Comes from</td><td>OAuth</td><td>OIDC</td></tr>
+      <tr><td>Hotel picture</td><td>Key card</td><td>Visitor badge</td></tr>
+      <tr><td>Answers</td><td>May this app open this door?</td><td>Who is the user?</td></tr>
+      <tr><td>Read by</td><td>The API</td><td>The app</td></tr>
+      <tr><td>Never use it as</td><td>Proof of who the user is</td><td>A key for an API</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>In our design</h2>
+  <p>Option A-5 (Entra login) gives the connector a key card made for the BSL API. That is the normal shape. Option A-3 shows Google's <em>badge</em> at the API's door. It works in v1 because only our own connector exists, but it is the shortcut. Lesson 1 shows exactly why.</p>
+
+  <hr>
+  <h2>Check yourself</h2>
+  <div class="quiz">
+    <div class="q" data-answer="1">
+      <p class="q-prompt">1. In the hotel picture, what is the ID token?</p>
+      <div class="q-opts">
+        <button class="q-opt">The key card for doors</button>
+        <button class="q-opt">The badge for the app</button>
+        <button class="q-opt">The passport at reception</button>
+        <button class="q-opt">The lock on the door</button>
+      </div>
+      <p class="q-explain" hidden>The ID token is the signed badge. It tells the app who the user is. The key card is the access token.</p>
+    </div>
+    <div class="q" data-answer="3">
+      <p class="q-prompt">2. Which problem does OAuth solve first?</p>
+      <div class="q-opts">
+        <button class="q-opt">Encrypting data inside the API</button>
+        <button class="q-opt">Storing passwords in a database</button>
+        <button class="q-opt">Finding the user's email address</button>
+        <button class="q-opt">Apps no longer need your password</button>
+      </div>
+      <p class="q-explain" hidden>OAuth replaces password sharing with limited, short-lived, revocable tokens. Finding the user's email is OIDC's job.</p>
+    </div>
+    <div class="q" data-answer="0">
+      <p class="q-prompt">3. Who is supposed to read the access token?</p>
+      <div class="q-opts">
+        <button class="q-opt">The API that receives it</button>
+        <button class="q-opt">The app that carries it</button>
+        <button class="q-opt">The user who approved it</button>
+        <button class="q-opt">Nobody, it is never checked</button>
+      </div>
+      <p class="q-explain" hidden>The API checks the access token. For the app it is opaque: something to carry, not to read.</p>
+    </div>
+    <div class="q" data-answer="2">
+      <p class="q-prompt">4. An app says: "I got an access token, so the user is Anna." What is wrong?</p>
+      <div class="q-opts">
+        <button class="q-opt">Nothing, tokens always contain names</button>
+        <button class="q-opt">Access tokens expire after one hour</button>
+        <button class="q-opt">Access tokens do not prove identity</button>
+        <button class="q-opt">Only the user may read tokens</button>
+      </div>
+      <p class="q-explain" hidden>This is the classic misuse that OIDC was made to fix. Identity comes from the ID token, which is made for the app.</p>
+    </div>
+    <div class="q" data-answer="1">
+      <p class="q-prompt">5. Why is giving an app your password bad? Pick the best reason.</p>
+      <div class="q-opts">
+        <button class="q-opt">Passwords are too long to type</button>
+        <button class="q-opt">You cannot revoke only that app</button>
+        <button class="q-opt">The app would run more slowly</button>
+        <button class="q-opt">Google forbids all third-party apps</button>
+      </div>
+      <p class="q-explain" hidden>With a shared password, the only way to stop one app is to change the password, which breaks every other app too. The app also gets all your access.</p>
+    </div>
+    <p class="quiz-score" hidden></p>
+  </div>
+
+  <h2>Say it without looking</h2>
+  <details class="recall"><summary>OAuth vs OIDC in one sentence each.</summary><div>OAuth gives an app a key card (access token) to use an API on your behalf. OIDC adds a badge (ID token) that tells the app who you are.</div></details>
+  <details class="recall"><summary>Name three things that go wrong when you give an app your password.</summary><div>It gets all your access; you cannot revoke only that app; it may store the password badly; a hack of the app leaks your password.</div></details>
+
+  <div class="source"><strong>Read next (10 min):</strong> <a href="https://oauth.net/articles/authentication/">"User Authentication with OAuth 2.0" on oauth.net</a>. It explains why OAuth alone is not a login system and how OIDC fixes it, with the same key-card idea in different words.</div>
+  <p class="ask">Anything unclear? Ask your teacher (Claude) in the chat, for example "can an access token ever contain the user's email?" or "why can't the API just read the badge?"</p>
+  <p class="small">Next: <a href="0001-who-is-this-token-for.html">Lesson 1, who is this token for?</a> The four OAuth roles and the audience rule.</p>
+</main>
+
+<script src="../assets/quiz.js"></script>
