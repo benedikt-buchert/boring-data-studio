@@ -21,6 +21,11 @@
 - [RFC 8693: OAuth 2.0 Token Exchange](https://www.rfc-editor.org/rfc/rfc8693)
   Swapping one token for another. Use for: later lesson on service-to-service and the A-9 pattern.
 
+- [GitHub Docs: OpenID Connect in GitHub Actions](https://docs.github.com/en/actions/concepts/security/openid-connect)
+  Each job gets a signed JWT describing the workflow (sub like `repo:org/repo:environment:prod`); clouds exchange it for short-lived tokens. Use for: workload identity lesson.
+- [Google Cloud: Workload Identity Federation with deployment pipelines](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines)
+  Official setup: provider, attribute mapping, attribute condition, IAM binding. Use for: the Google side of keyless CI.
+
 ## Wisdom (Communities)
 
 - [OAuth WG mailing list (IETF)](https://mailarchive.ietf.org/arch/browse/oauth/)
