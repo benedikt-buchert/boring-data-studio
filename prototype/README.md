@@ -137,3 +137,8 @@ Not done: PATH_KEY auth flow (O-02) and the native PostgreSQL connector SQL capt
 ### Adopted (2026-11-14)
 The main connector (`connector/Code.gs`, deployment AKfycbwVDI6M0Uddi3U99-RIH8yKVHSQrTuRs3iNxbjJih9y) now uses PATH_KEY with R-15 (`isAuthValid` checks stored credentials only; outages become `newUserError` messages). The report re-asked once for path + key; page 3 then verified 47/47 against independent truth (`verification/page3_pathkey.json`). The variant project `BSL Prototype PathKey` is obsolete.
 Why: URL and key are no longer in every data source; a URL change is one re-entry per user instead of one edit per data source; the API is no longer open to anyone with the URL; one published connector serves any API (O-02).
+
+## Wayfinder #21: BigQuery advanced services
+
+`api/bq_spike.py`, `api/bq_sql.py`, `connector/CodeBigQuery.gs`, `connector/appsscript.bigquery.json`.
+Findings and live runbook: `research/docs/bq-advanced-services.md`.

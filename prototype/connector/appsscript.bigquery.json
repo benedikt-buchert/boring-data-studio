@@ -1,0 +1,19 @@
+{
+  "timeZone": "Europe/Berlin",
+  "dependencies": {},
+  "dataStudio": {
+    "name": "BSL Prototype (BigQuery advanced services)",
+    "company": "prototype",
+    "logoUrl": "https://www.gstatic.com/images/branding/product/1x/data_studio_48dp.png",
+    "addonUrl": "https://example.com",
+    "supportUrl": "https://example.com",
+    "description": "PROTOTYPE (Wayfinder #21): BSL schema with descriptions, data queried by Data Studio directly in BigQuery.",
+    "advancedServices": {"schema": false, "data": true}
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/bigquery.readonly"
+  ]
+}
