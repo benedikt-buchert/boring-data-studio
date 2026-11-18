@@ -22,6 +22,7 @@ Checks:
   3. Shape B wrapped again at the same grain equals BSL; re-aggregated to a coarser grain it is
      wrong for distinct counts, as today (E-19).
   4. Gotchas in the generated SQL (date literal type, collisions, compute: bsl measures).
+  5. Median (E-47): holistic; raw mode over shape A; Ibis cannot compile an exact median for BigQuery.
 
 Run:  prototype/api/.venv/bin/python research/spikes/spike_bq_advanced_services.py
       (venv from prototype/README.md, plus "ibis-framework[bigquery]==11.0.0" for the dialect)
@@ -150,3 +151,27 @@ print("shape B: same-grain wrap exact; coarser re-aggregation overcounts distinc
 J = M_bq.to_untagged()
 assert len(J.columns) == len(set(J.columns))
 print("\nrow counts: shape A returns no rows to Apps Script; BigQuery returns only the aggregated result to Data Studio")
+
+# 5. Median (E-47, U-29). Holistic: no per-group summary combines to the total median.
+d = con.table("flights").delay
+tiny = ibis.memtable({"g": [1, 1, 1, 2, 2], "x": [1, 2, 3, 10, 20]})
+per_group = con.execute(tiny.group_by("g").aggregate(m=tiny.x.median())).sort_values("g").m.tolist()
+total = con.execute(tiny.aggregate(m=tiny.x.median())).m[0]
+assert per_group == [2, 15] and total == 3  # 3 cannot be built from 2 and 15 (mean 8.5, median-of-medians 8.5)
+# Raw mode in shape A: MEDIAN over the raw column equals BSL at every grain (DuckDB: exact median).
+for g in [[], ["origin"], ["carrier"]]:
+    got = con.raw_sql(ds_wrapper(inner, [DS_ID(x) for x in g], ["median_delay__raw"], agg_d,
+                                 {**formulas_d, "median_delay__raw": "MEDIAN(delay__value)"})).df()
+    want = M_duck.query(dimensions=g, measures=["median_delay"]).execute()
+    key = [DS_ID(x) for x in g]
+    if key: got, want = got.sort_values(key, na_position="first"), want.sort_values(key, na_position="first")
+    np.testing.assert_allclose(got.median_delay__raw.to_numpy(float), want.median_delay.to_numpy(float))
+# Ibis 11 has no BigQuery rule for exact Median/Quantile; only approximate APPROX_QUANTILES compiles.
+for e in (d.median(), d.quantile(0.5)):
+    try:
+        ibis.to_sql(con.table("flights").aggregate(m=e), dialect="bigquery"); raise AssertionError("compiled")
+    except ibis.common.exceptions.OperationNotDefinedError:
+        pass
+assert "APPROX_QUANTILES" in ibis.to_sql(con.table("flights").aggregate(m=d.approx_median()), dialect="bigquery")
+print("median: holistic (2, 15 -> 3); raw-mode MEDIAN over shape A equals BSL in DuckDB; "
+      "Ibis cannot compile exact median/quantile for BigQuery, only APPROX_QUANTILES")

@@ -39,7 +39,19 @@ BASE, AGG, FORMULAS, EXCLUDED = base_relation(M_BQ, date_as_string=DATE_AS_STRIN
 BASE_SQL = ibis.to_sql(BASE, dialect="bigquery")
 BASE_COLS = set(BASE.columns)
 ref_ok = lambda f: all(r in BASE_COLS for r in re.findall(r"\$(\w+)", f.get("formula", "")))
-BQ_SCHEMA = [f for f in SCHEMA if (f["id"] in BASE_COLS or "formula" in f) and ref_ok(f)]
+# U-29: median in raw mode - hidden numeric raw dimension + MEDIAN() formula; Data Studio computes it in BigQuery.
+RAW_FIELDS = []
+for fid, formula in FORMULAS.items():
+    if fid.endswith("__raw"):
+        raw = re.search(r"\((\w+)\)", formula).group(1)
+        if not any(f["id"] == raw for f in SCHEMA + RAW_FIELDS):
+            RAW_FIELDS.append({"id": raw, "name": raw, "type": "DIMENSION", "dataType": "NUMBER", "semanticType": "NUMBER", "isHidden": True, "description": ""})
+        base = BY_ID.get(fid[:-5], {})
+        RAW_FIELDS.append({"id": fid, "name": f"{fid[:-5]} (Data Studio)", "type": "METRIC", "dataType": "NUMBER", "aggregation": "AUTO",
+                           "formula": re.sub(r"\((\w+)\)", r"($\1)", formula),
+                           "description": (base.get("description", "").split(" (computed by BSL")[0]
+                                           + " (computed by Data Studio in BigQuery from the raw values; U-29: exact or approximate?)")})
+BQ_SCHEMA = [f for f in SCHEMA + RAW_FIELDS if (f["id"] in BASE_COLS or "formula" in f) and ref_ok(f)]
 
 
 @app.get("/bq/schema")

@@ -17,6 +17,10 @@ def resolve(expr, table):
     return expr.resolve(table) if hasattr(expr, "resolve") else expr(table)
 
 
+# Holistic aggregates: no per-group summary exists, Data Studio needs the raw values (section 7.6 raw mode, AD-30).
+RAW_MODE = {"Median": "MEDIAN", "ApproxMedian": "MEDIAN"}
+
+
 def _compute(obj):
     return ((obj.metadata or {}).get("looker_studio") or {}).get("compute", "auto")
 
@@ -26,7 +30,7 @@ def base_relation(M, date_as_string=False):
 
     Returns (ibis table, {column: SUM|MIN|MAX}, {metric: SQL formula over columns}, excluded).
     Only the AD-26 translation rows. compute: bsl is excluded: a request-independent relation has
-    no requested grain.
+    no requested grain. For a median it adds the raw column and a "<name>__raw" formula (U-29).
     """
     J = M.to_untagged()
     cols, agg, formulas, excluded = {}, {}, {}, []
@@ -39,10 +43,14 @@ def base_relation(M, date_as_string=False):
         if "." in short(name):
             continue  # joined-model measures: not exposed (AD-37)
         name = short(name)
+        node = resolve(m.expr, J).op()
         if _compute(m) == "bsl":
             excluded.append((name, "compute: bsl - needs the requested grain"))
+            if type(node).__name__ in RAW_MODE and node.where is None:  # U-29: raw mode, rows stay in BigQuery
+                raw = f"{node.arg.name}__value"
+                cols.setdefault(raw, node.arg.to_expr())
+                formulas[f"{name}__raw"] = f"{RAW_MODE[type(node).__name__]}({raw})"
             continue
-        node = resolve(m.expr, J).op()
         kind = type(node).__name__
         where = getattr(node, "where", None)
         arg = node.arg.to_expr() if kind != "CountStar" else None  # CountStar.arg is the table

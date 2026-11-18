@@ -2,12 +2,12 @@
 
 Question: can the connector use BigQuery advanced services to get native BigQuery speed and keep the BSL descriptions and formulas? ([#21](https://github.com/benedikt-buchert/boring-data-studio/issues/21))
 
-Status (2026-11-18): the parts that need no Google account are complete. This covers the docs, the SQL from BSL/Ibis, correctness against a simulated Data Studio wrapper, and the auth analysis. The live parts are in the runbook below: timing, the real SQL that Data Studio sends, and the schema behaviour in a report. This file is evidence and recommendations. **It contains no decisions.** Decisions go into the ticket. The IDs LS-65..LS-69, E-44..E-46 and U-21..U-28 continue the numbering of `research.md`, and they move there after review.
+Status (2026-11-18): the parts that need no Google account are complete. This covers the docs, the SQL from BSL/Ibis, correctness against a simulated Data Studio wrapper, and the auth analysis. The live parts are in the runbook below: timing, the real SQL that Data Studio sends, and the schema behaviour in a report. This file is evidence and recommendations. **It contains no decisions.** Decisions go into the ticket. The IDs LS-65..LS-69, E-44..E-47 and U-21..U-29 continue the numbering of `research.md`, and they move there after review.
 
 ## 1. Short answer
 
 - **Probably yes, for most measures, in a specific shape.** The API gives one *base relation* SQL for each model ("shape A"). This relation is row-level. It has one column for each dimension, each hidden raw dimension and each metric input, and the column names are the Data Studio field IDs. The normal `getSchema` stays as it is (descriptions, `$` formulas, hidden helpers), and Data Studio aggregates in BigQuery. Offline, this matches BSL at every grain we tested, the summary row and month buckets included (E-45).
-- **What is lost in this mode:** `compute: bsl` measures (median, `.all()`, approx distinct), BSL's `auth_hook`/row-level control (BigQuery IAM decides instead), and the API guards. The guards are not necessary for the row cap, but AD-36 (one-to-many) needs a new rule.
+- **What is lost in this mode:** `compute: bsl` measures that need the requested grain (`.all()`, approx distinct). A median can come back as a Data Studio `MEDIAN()` over a raw column (section 4a, U-29), BSL's `auth_hook`/row-level control (BigQuery IAM decides instead), and the API guards. The guards are not necessary for the row cap, but AD-36 (one-to-many) needs a new rule.
 - **Not proven:** that Data Studio wraps the SQL as a custom query and binds formula fields to it. The docs strongly suggest it (LS-67, LS-68). The speed gain is not measured yet. The runbook answers both in about 30 minutes.
 - **Recommendation:** make it an optional, BigQuery-only data mode next to the v1 path. Do not change v1 before U-21..U-23 pass. If they pass, the same `/schema` contract feeds both modes.
 
@@ -39,6 +39,7 @@ Spike: `research/spikes/spike_bq_advanced_services.py` (prototype model with joi
 | E-44 | Generate shape A from the BSL model through the AD-26 translation rows: `CountStar` → `1`, `Sum` → arg (bool cast to INT64), `Count` → `arg IS NOT NULL`, `Min`/`Max` → arg, `Mean` → `__sum`/`__count` helpers, `CountDistinct` → `<col>__value`. Compile it with `ibis.to_sql(dialect="bigquery")`. | Valid BigQuery SQL (parsed by sqlglot): one `SELECT` over the `LEFT JOIN`. Column names equal the Data Studio field IDs, `airports__city` included. `median_delay` and `pct_of_total` (`compute: bsl`) are excluded. No credentials are needed. |
 | E-45 | Run shape A in DuckDB, wrapped the way we assume Data Studio does it (`SELECT dims, SUM(col)…, COUNT(DISTINCT raw), formulas FROM (<A>) [WHERE …] GROUP BY dims`). Compare with BSL. | **128/128 values equal**: 16 metrics × 8 requests. The requests are 6 grains including the summary row (no dimensions), a month grain bucketed by the wrapper, and an `IN` filter plus a date range. The means, the distinct count and the calculated measures (`distance_per_flight`, `on_time_rate`) are included. |
 | E-46 | Shape B: compile `SemanticAggregate.to_sql(dialect="bigquery")` for a request. | It works. **Gotcha:** a date range given as strings (as Data Studio sends it) compiles to `dep_date >= DATETIME('2026-09-01T00:00:00')` against a DATE column. Date objects give `DATE(2026, 9, 1)`. When the wrapper re-aggregates at the same grain, the result is exact. At a coarser grain, distinct counts overcount again (as in E-19). |
+| E-47 | Median: per-group medians of `1,2,3` and `10,20` are 2 and 15, the total median is 3. Raw mode in shape A: a hidden `delay__value` column plus `MEDIAN(delay__value)` in the wrapper equals BSL at 3 grains (DuckDB, exact). Compile `median()`, `quantile(0.5)` and `approx_median()` for BigQuery with Ibis 11. | Median is holistic: no summary per group combines to it. Raw mode is correct in DuckDB. **Ibis 11 has no BigQuery rule for exact `Median` or `Quantile`** (`OperationNotDefinedError`); only `approx_median`/`approx_quantile` compile, to `APPROX_QUANTILES`. So a BSL `median()` measure fails on a BigQuery backend on every path, today's `/data` included. |
 
 The `ds_wrapper` in E-45 is our assumption of the Data Studio SQL. U-22 checks it against the real SQL.
 
@@ -80,9 +81,20 @@ The API can give both shapes from BSL/Ibis (E-44, E-46). In BigQuery mode:
 | Fixed-grain guard (R-09) | No `compute: bsl` in shape A, so there is nothing to guard. |
 | Filter translation (§8.2) | Not needed. Data Studio pushes every operator down (LS-67). |
 | One-to-many (AD-36) | A row-level join fans out the measures of the "one" side. The API cannot reject the request, because shape A never sees it. Rule needed: exclude one-side measures in this mode, or pre-aggregate them. |
-| `compute: bsl` / `both` | Only the `data_studio` field exists. Median, quantiles, `.all()` and approx distinct need a normal (ROWS) data source. U-25 checks whether one connector can mix both. |
+| `compute: bsl` / `both` | Only the `data_studio` field exists. `.all()` and approx distinct need a normal (ROWS) data source. Median: see section 4a. U-25 checks whether one connector can mix both. |
 | `auth_hook`, RLS (D-13) | BSL is not in the data path. BigQuery IAM of the token holder decides, or an SQL `WHERE` on the verified email (LS-68 pattern). |
 | Injection | Shape A contains no request input. Shape B contains filter literals that Ibis escapes. BigQuery parameters would be cleaner, but there is no `DATE` type (LS-66). |
+
+**4a. Median and other holistic measures.**
+
+- Mean, sum, count, min, max and distinct count over raw values can be split into summaries per group that Data Studio adds up. Median, percentiles and mode cannot (E-47). They have only two options: the finished value at the exact grain (`compute: bsl`), or the raw values with a Data Studio function (raw mode, section 7.6).
+- AD-30 left raw mode out of v1, partly because every raw row would pass through the API and Apps Script. In BigQuery mode the rows stay in BigQuery, so this reason does not apply.
+- The spike adds a raw-mode field for each `compute: bsl` median: a hidden numeric dimension `delay__value` and a metric `median_delay__raw` with the formula `MEDIAN($delay__value)`. The `compute: bsl` field stays excluded in shape A.
+- Open (U-29): which SQL Data Studio generates for `MEDIAN` on BigQuery. BigQuery has no exact median aggregate, so it is probably `APPROX_QUANTILES`. Then the value can differ from an exact median, also in how an even count of values is handled. Ibis has the same limit (E-47): an exact BSL median on BigQuery does not work on any path, so for a BigQuery deployment the choice is between an approximate median and no median.
+- Options after U-29:
+  - exact or close enough: expose the raw-mode field with a description that names the method;
+  - approximate: model the measure as `approx_median()` in BSL as well, so that both say "approximate";
+  - not acceptable: no median in BigQuery mode.
 
 **5. Auth.**
 
@@ -141,6 +153,7 @@ Needs: a Google account with a BigQuery project (you need `bigquery.jobUser` on 
 | U-26 | Page-load time, first load and reload: ROWS vs A vs A_CACHED vs native. | Time from navigation until no chart shows a spinner (`evaluate_script` poll). Use a fresh date range for each "first load", so that the Data Studio cache misses. Also record the Executions durations. |
 | U-27 | Are the distinct counts and means correct in the real report? | Dump the components and run `prototype/verify_dashboard.py` (same data as the prototype). |
 | U-28 | On reload, does Data Studio skip `getData`, as in E-41? Does BigQuery report `cache_hit`? | Executions page and the `cache_hit` column from U-22. |
+| U-29 | Which SQL does Data Studio generate for `MEDIAN($delay__value)` on BigQuery (exact, `APPROX_QUANTILES`, or something else)? Does the value equal the exact median from `prototype/truth.py`, at the origin grain and in the summary row? | Add `median_delay (Data Studio)` to the origin table on the A page (not the ROWS page: `/data` does not know the field). Read the query from U-22 and compare the values. |
 | T-7 | Does an API-minted service-account token work in the config? Does it ever reach the browser? | Put a token from `gcloud auth print-access-token --impersonate-service-account=…` in the config temporarily. Search the browser network log for `ya29.`. |
 
 **Rules for the decision**
@@ -151,8 +164,8 @@ Needs: a Google account with a BigQuery project (you need `bigquery.jobUser` on 
 
 ## 6. Files
 
-- `research/spikes/spike_bq_advanced_services.py`: the offline proof (E-44..E-46). Run with `prototype/api/.venv/bin/python`.
-- `prototype/api/bq_sql.py`: shape A builder, shared by the spike and the API.
+- `research/spikes/spike_bq_advanced_services.py`: the offline proof (E-44..E-47). Run with `prototype/api/.venv/bin/python`.
+- `prototype/api/bq_sql.py`: shape A builder (with raw-mode median columns), shared by the spike and the API.
 - `prototype/api/bq_spike.py`: `/bq/schema` and `/bq/sql` on top of the prototype API, plus `export` for the BigQuery data.
 - `prototype/connector/CodeBigQuery.gs` and `appsscript.bigquery.json`: connector with modes A, A_CACHED, B and ROWS.
 - Venv: the README venv plus `ibis-framework[bigquery]==11.0.0` (for the BigQuery dialect).
