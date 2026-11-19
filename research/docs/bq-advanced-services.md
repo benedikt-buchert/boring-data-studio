@@ -2,7 +2,7 @@
 
 Question: can the connector use BigQuery advanced services to get native BigQuery speed and keep the BSL descriptions and formulas? ([#21](https://github.com/benedikt-buchert/boring-data-studio/issues/21))
 
-Status (2026-11-18): the parts that need no Google account are complete. This covers the docs, the SQL from BSL/Ibis, correctness against a simulated Data Studio wrapper, and the auth analysis. The live parts are in the runbook below: timing, the real SQL that Data Studio sends, and the schema behaviour in a report. This file is evidence and recommendations. **It contains no decisions.** Decisions go into the ticket. The IDs LS-65..LS-69, E-44..E-47 and U-21..U-29 continue the numbering of `research.md`, and they move there after review.
+Status (2026-11-18): the parts that need no Google account are complete. This covers the docs, the SQL from BSL/Ibis, correctness against a simulated Data Studio wrapper, and the auth analysis. The live parts are in the runbook below: timing, the real SQL that Data Studio sends, and the schema behaviour in a report. This file is evidence and recommendations. **It contains no decisions.** Decisions go into the ticket. The IDs LS-65..LS-71, E-44..E-47 and U-21..U-32 continue the numbering of `research.md`, and they move there after review.
 
 ## 1. Short answer
 
@@ -10,6 +10,7 @@ Status (2026-11-18): the parts that need no Google account are complete. This co
 - **What is lost in this mode:** `compute: bsl` measures that need the requested grain (`.all()`, approx distinct), BSL's `auth_hook`/row-level control (BigQuery IAM decides instead), and the API guards. The guards are not necessary for the row cap, but AD-36 (one-to-many) needs a new rule. A median can come back as a Data Studio `MEDIAN()` over a raw column (section 4a, U-29).
 - **Not proven:** that Data Studio wraps the SQL as a custom query and binds formula fields to it. The docs strongly suggest it (LS-67, LS-68). The speed gain is not measured yet. The runbook answers both in about 30 minutes.
 - **Recommendation:** make it an optional, BigQuery-only data mode next to the v1 path. Do not change v1 before U-21..U-23 pass. If they pass, the same `/schema` contract feeds both modes.
+- **New competitor (2026-11-19):** BigQuery graph measures are GA, and Google says that the native Data Studio BigQuery connector now honours them (LS-70, LS-71). If that is true, the native connector gives native speed and correct totals with no connector code. It is not known if it shows the measure descriptions. The live run therefore also measures a graph baseline (U-30..U-32). If the graph baseline passes, shape A must show a clear gain over it, or it has no reason to exist for BigQuery.
 
 ## 2. Evidence from the docs
 
@@ -19,6 +20,8 @@ Status (2026-11-18): the parts that need no Google account are complete. This co
 | LS-66 | `newBigQueryConfig()` has only these setters: billing project, query, standard SQL, access token, and `addQueryParameter`. Parameter types are only `BOOL`, `FLOAT64`, `INT64` and `STRING`, and each value is passed as a string. There is **no** setter for `maximumBytesBilled`, labels or job settings, and no `DATE` parameter type. | [BigQueryConfig](https://developers.google.com/apps-script/reference/data-studio/big-query-config) |
 | LS-67 | For advanced services: "Filters are automatically pushed down". Calculated fields are supported through `getSchema`. The Apps Script BigQuery service and the REST API do not push filters down. Advanced services cannot do custom caching or transform data in `getData`, and the fetched data never reaches Apps Script. | [Connect to BigQuery](https://developers.google.com/looker-studio/connector/connect-to-bigquery) |
 | LS-68 | Google's row-level-security example builds SQL in `getData` from the effective user's email, returns it with a service-account token, and ignores `request.fields`. Its schema declares `sales` as a SUM metric, so Data Studio aggregates the returned relation. It uses `forceViewersCredentials`, and each viewer authorises once. | [BigQuery RLS with Advanced Services](https://developers.google.com/looker-studio/connector/bigquery-row-level-security) |
+| LS-70 | BigQuery graph measures are GA (2026-11-11). A measure is `MEASURE(<aggregate>) AS name` on a node or edge table of a property graph. It is locked to the `KEY` of its table, so joins do not double-count it. Measures can combine other measures with `AGG()` (for example a ratio). `OPTIONS (description = …, synonyms = …)` adds metadata. SQL reads measures only through `GRAPH_EXPAND(...)` and `AGG()`. Permitted aggregates: `SUM`, `AVG`, `COUNT`, `MIN`, `MAX` (with `DISTINCT`) and `AGG`. Not permitted: `COUNT(*)`, window functions, user-defined aggregates. There is no median. A graph change does not invalidate cached `GRAPH_EXPAND` results. | [Graph measures](https://docs.cloud.google.com/bigquery/docs/graph-measures), [GA blog](https://cloud.google.com/blog/products/data-analytics/bigquery-measures-ga-unifying-bi-metrics-and-knowledge-graphs) |
+| LS-71 | Google: "With the updated BigQuery connector in Data Studio, you can now connect directly to BigQuery graphs and build interactive visualizations powered by native measures. Data Studio honors the aggregation logic defined in your graph model, keeping complex calculations consistent across charts while preventing accidental client-side re-aggregations." The post does not say if Data Studio shows the measure descriptions, or how distinct counts, report calculated fields and summary rows behave. Blog only, no reference documentation found. | [GA blog](https://cloud.google.com/blog/products/data-analytics/bigquery-measures-ga-unifying-bi-metrics-and-knowledge-graphs) |
 | LS-69 | A user token needs `https://www.googleapis.com/auth/bigquery.readonly` in `oauthScopes`. A service-account token needs no manifest scope. Whether `bigquery.readonly` counts as a *sensitive* scope for OAuth verification (#3) is **not confirmed**. | LS-65 page; [OAuth verification FAQ](https://support.google.com/cloud/answer/13463817) |
 
 **Not documented anywhere:**
@@ -115,7 +118,7 @@ The API can give both shapes from BSL/Ibis (E-44, E-46). In BigQuery mode:
   - the rules for AD-36 and `compute: bsl` above.
 - Revisit this if U-26 shows that the current path is too slow for typical pages even with caching. Then BigQuery direct becomes the default for BigQuery deployments.
 
-## 5. Live runbook (U-21..U-28)
+## 5. Live runbook (U-21..U-32)
 
 Needs: a Google account with a BigQuery project (you need `bigquery.jobUser` on it, plus dataset create), and the Chrome MCP set-up from `docs/datastudio-driving.md`. Takes about 30 minutes.
 
@@ -134,7 +137,8 @@ Needs: a Google account with a BigQuery project (you need `bigquery.jobUser` on 
 3. New Apps Script project: paste `prototype/connector/CodeBigQuery.gs` and the manifest `appsscript.bigquery.json`. Use the head deployment ID as the `connectorId`.
 4. Create four data sources from the same connector, one for each mode: `A`, `A_CACHED`, `B` and `ROWS`. Use the billing project = your project.
 5. Native baseline: `BQ_DATASET=<project>.bsl_spike .venv/bin/python bq_spike.py sql-a > /tmp/bq21/a.sql`, then `bq mk --use_legacy_sql=false --view "$(cat /tmp/bq21/a.sql)" <project>:bsl_spike.base_relation`. Connect the native BigQuery connector to that view.
-6. One report page per data source, with the same charts as the prototype report:
+6. Graph baseline (LS-70, LS-71): in `prototype/api/bq_graph.sql`, replace `my-project.bsl_spike` with your dataset, then run it with `bq query --use_legacy_sql=false --nouse_cache < bq_graph.sql`. The DDL is not tested yet: correct the syntax if BigQuery refuses it. Run the self-check query at the end of the file and compare it with `prototype/truth.py`. Then connect the native BigQuery connector to the graph `FlightsGraph`.
+7. One report page per data source (the graph baseline included), with the same charts as the prototype report:
    - a table origin × (flight_count, avg_distance, unique_carriers, on_time_rate) with a summary row;
    - a scorecard;
    - a monthly time series on dep_date;
@@ -154,6 +158,9 @@ Needs: a Google account with a BigQuery project (you need `bigquery.jobUser` on 
 | U-27 | Are the distinct counts and means correct in the real report? | Dump the components and run `prototype/verify_dashboard.py` (same data as the prototype). |
 | U-28 | On reload, does Data Studio skip `getData`, as in E-41? Does BigQuery report `cache_hit`? | Executions page and the `cache_hit` column from U-22. |
 | U-29 | Which SQL does Data Studio generate for `MEDIAN($delay__value)` on BigQuery (exact, `APPROX_QUANTILES`, or something else)? Does the value equal the exact median from `prototype/truth.py`, at the origin grain and in the summary row? | Add `median_delay (Data Studio)` to the origin table on the A page (not the ROWS page: `/data` does not know the field). Read the query from U-22 and compare the values. |
+| U-30 | Graph baseline: are the values correct? Check the origin table with summary row, the scorecard, the month series, the carrier filter and the date range. Check `unique_carriers` and `on_time_rate` especially. Can a report editor change the aggregation of a measure, or put it in a calculated field, and get a wrong total? | Run `prototype/verify_dashboard.py` on the graph page. Read the SQL from the U-22 query (`query LIKE '%FlightsGraph%'`): does it use `AGG()`? Then try a report calculated field `SUM(flight_count)` and a changed aggregation. |
+| U-31 | Graph baseline: does Data Studio show the `OPTIONS(description)` of the measures in the field list and in the chart tooltips? | Data source field list. If yes, the graph baseline removes the main reason for the custom connector on BigQuery (LS-47). |
+| U-32 | Page-load time of the graph baseline, first load and reload, measured as in U-26. | Same method as U-26. Add the graph row to the U-26 table. |
 | T-7 | Does an API-minted service-account token work in the config? Does it ever reach the browser? | Put a token from `gcloud auth print-access-token --impersonate-service-account=…` in the config temporarily. Search the browser network log for `ya29.`. |
 
 **Rules for the decision**
@@ -161,11 +168,15 @@ Needs: a Google account with a BigQuery project (you need `bigquery.jobUser` on 
 - If U-21 shows one call per data source, shape B is dead and shape A is the only option.
 - If U-22 shows no wrapping (Data Studio runs our SQL as-is), only shape B can work, and the fixed-grain limits of §7.7 apply to everything.
 - If U-23 shows that formulas do not bind, the mode loses its reason to exist, because the native connector on a view gives the same result.
+- If U-30 and U-31 pass, the graph baseline gives native speed, correct totals and descriptions with no connector code. Then shape A is useful only for what graph measures cannot do (median through U-29, `compute` overrides, BSL as the single source). A generator from BSL YAML to graph DDL becomes the cheaper BigQuery path. The non-BigQuery path (D-02) does not change.
+- If U-30 passes and U-31 fails, the trade-off is speed (graph) against descriptions (shape A or ROWS).
+- Do not try to return `GRAPH_EXPAND … AGG()` SQL from shape A: Data Studio probably wraps the SQL (LS-68), and `AGG()` then loses its grain. This is not tested.
 
 ## 6. Files
 
 - `research/spikes/spike_bq_advanced_services.py`: the offline proof (E-44..E-47). Run with `prototype/api/.venv/bin/python`.
 - `prototype/api/bq_sql.py`: shape A builder (with raw-mode median columns), shared by the spike and the API.
 - `prototype/api/bq_spike.py`: `/bq/schema` and `/bq/sql` on top of the prototype API, plus `export` for the BigQuery data.
+- `prototype/api/bq_graph.sql`: the flights model as a BigQuery property graph with measures (graph baseline, U-30..U-32). Not run yet.
 - `prototype/connector/CodeBigQuery.gs` and `appsscript.bigquery.json`: connector with modes A, A_CACHED, B and ROWS.
 - Venv: the README venv plus `ibis-framework[bigquery]==11.0.0` (for the BigQuery dialect).
